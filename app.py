@@ -4,12 +4,6 @@ import re
 import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-import io
-
-# ReportLab Imports for PDF Generation
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # LangChain Imports
 from langchain_community.document_loaders import PyPDFDirectoryLoader
@@ -31,7 +25,7 @@ def get_nvidia_llm():
     return ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.3,
-        max_tokens=2500  # Reduced to speed up response generation time
+        max_tokens=2500
     )
 
 @st.cache_resource
@@ -117,29 +111,6 @@ class TradeGreetingHandler:
             
         return is_greeting, greeting_response, actual_question
 
-# --- PDF REPORT GENERATOR ---
-def generate_pdf_report(report_text: str) -> bytes:
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    styles = getSampleStyleSheet()
-    
-    story = []
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, leading=20, textColor='#1e3d59')
-    body_style = ParagraphStyle('BodyStyle', parent=styles['Normal'], fontSize=10, leading=14)
-    
-    story.append(Paragraph("Dictamen Técnico de Comercio Exterior y Cumplimiento Aduanero", title_style))
-    story.append(Spacer(1, 12))
-    
-    for line in report_text.split('\n'):
-        clean_line = line.replace('*', '').strip()
-        if clean_line:
-            story.append(Paragraph(clean_line, body_style))
-            story.append(Spacer(1, 4))
-            
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
-
 # --- SYSTEM PROMPT TEMPLATE ---
 TRADE_SME_PROMPT_TEMPLATE = """
 Eres un Asistente Especialista Senior (SME) en Comercio Exterior y Legislación Aduanera Mexicana, operando en los corredores comerciales EE.UU.-México (T-MEC / USMCA).
@@ -216,7 +187,7 @@ if user_query:
             try:
                 with st.status("Procesando dictamen técnico...", expanded=True) as status:
                     st.write("🔍 Consultando índice vectorial FAISS...")
-                    relevant_docs = vectorstore.similarity_search(actual_q, k=3)  # Reduced k to 3 for speed
+                    relevant_docs = vectorstore.similarity_search(actual_q, k=3)
                     
                     docs_context = [
                         f"--- Documento Legal #{i} [{Path(doc.metadata.get('source', 'Desconocido')).name}] ---\n{doc.page_content}"
@@ -237,20 +208,12 @@ if user_query:
                     final_output = "".join(chunks)
                     status.update(label="Dictamen completado", state="complete", expanded=False)
                 
-                # Footnotes
+                # Footnotes / Referenced Extracts
                 with st.expander("📂 Ver extractos normativos consultados"):
                     for doc in relevant_docs:
                         source_name = Path(doc.metadata.get('source', 'Desconocido')).name
                         st.write(f"**{source_name}**")
                         st.caption(doc.page_content)
-                
-                # Lazy PDF Generation: Only runs when user clicks download
-                st.download_button(
-                    label="📄 Descargar Dictamen Técnico en PDF",
-                    data=generate_pdf_report(final_output),
-                    file_name="Dictamen_Comercio_Exterior_SME.pdf",
-                    mime="application/pdf"
-                )
                     
             except Exception as e:
                 st.error(f"Error durante la consulta del modelo: {str(e)}")
