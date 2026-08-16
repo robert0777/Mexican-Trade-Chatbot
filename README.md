@@ -1,28 +1,28 @@
-# 📦 Agentic AI Mexican Customs & Trade Assistant
+# 🛃 Agentic AI Mexican Customs & Trade Assistant
 
-An **Agentic AI System** developed to assist importers, exporters, and customs brokers navigating the **US-Mexico** and **EU-Mexico** trade corridors. 
+An **Agentic AI System (SME)** developed to assist importers, exporters, and customs brokers navigating the **US-Mexico (USMCA/T-MEC)** and **EU-Mexico (TLCUEM)** trade corridors.
 
-Unlike conventional chatbots, this system operates as an **autonomous consultor**: it plans multi-step tasks, queries official Mexican trade legislation (*TIGIE, T-MEC, NOMs*) using a local RAG engine, performs deterministic landed-cost calculations (*CIF, IGE, DTA, IVA*), and generates downloadable official compliance reports in PDF.
+Operating as an autonomous specialist in official Mexican and international trade legislation, this agent analyzes legal frameworks, performs precision cost and contribution calculations, and generates compliance reports complete with **(RAID) Risk, Actions, Issues, and Decisions** evaluations.
 
 ---
 
 ## 🌟 Key Features
 
-* **Autonomous ReAct Agent Loop**: Utilizes **LangGraph** and **NVIDIA NIMs** (`llama-3.3-nemotron-super-49b-v1.5`) to plan, execute, and observe multi-step trade analysis workflows.
-* **Legal Grounding (RAG)**: Ingests local trade manuals, tariff schedules, and regulatory gazettes (*TIGIE, SAT/VUCEM, NOMs*) to cite official legal foundations.
-* **Deterministic Tax & Duty Calculator**: A dedicated code-execution tool that computes exact base values (*CIF*), import duties (*IGE*), customs handling fees (*DTA*), and value-added tax (*IVA*).
-* **Automated PDF Export**: Generates downloadable, styled PDF reports containing executive summaries, itemized cost breakdowns, and document clearance checklists.
-* **Transparent Execution**: Displays real-time reasoning loops, tool invocations, and parameter selections directly in the Streamlit UI.
+* **Agentic Trade SME Persona**: Acts as an expert advisor on Mexican tariff classification (HS/TIGIE), USMCA/T-MEC Rules of Origin, and EU-Mexico trade agreements.
+* **Legal Ingestion & Grounding (RAG)**: Ingests documents from `./pdf_files_comercio_exterior` (*Ley Aduanera, LIGIE, RGCE, CFF, HTS, USMCA*) using `PyPDFDirectoryLoader` and custom chunking logic.
+* **Deterministic Financial Calculations**: Computes base values and import taxes (*IGIE, DTA, IVA, ISAN, IEPS*) formatted accurately in respective currencies ($USD,$ MXN, € EUR) and percentages.
+* **RAID Matrix Compliance Standard**: Every formal consultation concludes with a structured **(RAID) Risk, Actions, Issues, Decisions** markdown table for clear risk assessment.
+* **Legal References & Disclaimers**: Cites specific articles, laws, and annexes for further consultation while supplying mandatory regulatory disclaimers.
 
 ---
 
-## 🛠️ Architecture & Tech Stack
+## 🛠️ Tech Stack & Dependencies
 
-* **Framework & UI**: [Streamlit](https://streamlit.io/)
-* **Agentic Orchestration**: [LangGraph](https://www.langchain.com/langgraph) & [LangChain](https://www.langchain.com/)
-* **LLM Core**: NVIDIA NIMs (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) via `langchain-nvidia-ai-endpoints`
-* **PDF Document Ingestion & RAG**: `PyPDFDirectoryLoader`, `RecursiveCharacterTextSplitter`, `tiktoken`
-* **PDF Report Generation**: [ReportLab](https://www.reportlab.com/)
+* **Frontend & UX**: [Streamlit](https://streamlit.io/)
+* **LLM Engine**: NVIDIA NIM (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) via OpenAI API endpoints
+* **Agentic Orchestration**: [LangChain](https://www.langchain.com/) & [LangGraph](https://www.langchain.com/langgraph)
+* **Document Processing & RAG**: `pypdf`, `RecursiveCharacterTextSplitter`, `tiktoken`
+* **PDF Report Exports**: `reportlab`
 
 ---
 
@@ -31,8 +31,8 @@ Unlike conventional chatbots, this system operates as an **autonomous consultor*
 ```text
 customs-agent-ai/
 │
-├── app.py                         # Main Streamlit application and Agent logic
-├── requirements.txt               # Python dependencies
-├── README.md                      # Project documentation
-├── .env.example                   # Template for environment variables
-└── pdf_files_comercio_exterior/   # Local directory for reference PDFs (TIGIE, NOMs, FTAs)
+├── app.py                         # Streamlit application containing UI & Trade SME Agent
+├── requirements.txt               # Dependencies (Streamlit, OpenAI, LangChain, LangGraph, etc.)
+├── README.md                      # Updated project documentation
+├── .env                           # Environment variables (NVIDIA_API_KEY)
+└── pdf_files_comercio_exterior/   # Reference directory for trade laws, gazettes, and T-MEC texts
