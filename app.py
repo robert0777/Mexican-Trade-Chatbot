@@ -6,12 +6,6 @@ from pathlib import Path
 from functools import lru_cache
 from dotenv import load_dotenv
 
-# PDF Generation Imports
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-
 # LangChain, LangGraph & Model Imports
 from langchain_core.tools import tool
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
@@ -77,35 +71,6 @@ def select_relevant_chunks(question: str, chunks: list, max_total_tokens: int = 
             current_tokens += tokens
     return selected
 
-def create_pdf_report(title: str, text_content: str) -> str:
-    """Generates a ReportLab PDF document directly from the completed analysis text."""
-    pdf_filename = f"USMCA_Compliance_Report_{int(time.time())}.pdf"
-    pdf_path = Path(pdf_filename)
-    
-    doc = SimpleDocTemplate(str(pdf_path), pagesize=letter)
-    styles = getSampleStyleSheet()
-    
-    title_style = ParagraphStyle(
-        'TitleStyle', parent=styles['Heading1'], fontSize=16, 
-        textColor=colors.HexColor('#1E3A8A'), spaceAfter=12
-    )
-    heading_style = ParagraphStyle(
-        'HeadingStyle', parent=styles['Heading2'], fontSize=12, 
-        textColor=colors.HexColor('#1D4ED8'), spaceBefore=10, spaceAfter=6
-    )
-    body_style = styles['BodyText']
-    body_style.spaceAfter = 8
-
-    story = [
-        Paragraph(f"<b>{title}</b>", title_style),
-        Paragraph("<b>Official USMCA / T-MEC Trade Compliance Assessment</b>", styles['Normal']),
-        Spacer(1, 12),
-        Paragraph("Executive Assessment & Details", heading_style),
-        Paragraph(text_content.replace('\n', '<br/>'), body_style)
-    ]
-    doc.build(story)
-    return str(pdf_path)
-
 # ==============================================================================
 # 2. Autonomous Agentic Tools
 # ==============================================================================
@@ -166,9 +131,11 @@ def get_agent_executor():
     
     system_prompt = (
         "You are an expert Autonomous Trade Agent focusing strictly on USMCA / T-MEC trade.\n"
-        "1. LANGUAGE: Respond strictly in the language used by the user.\n"
-        "2. CALCULATIONS: Always invoke `calculate_usmca_import_duties` when monetary values are provided.\n"
-        "3. RESPONSE: Provide a comprehensive, step-by-step compliance breakdown directly in your text response."
+        "1. LANGUAGE: Respond strictly in the language used by the user (English or Spanish).\n"
+        "2. LEGAL CONTEXT: Explicitly cite applicable legal frameworks (e.g., Ley Aduanera, TIGIE, USMCA Chapter 5 Rules of Origin, NOMs, USDA/APHIS, SENASICA).\n"
+        "3. INPUT FORMAT TEMPLATE: If the user provides an incomplete query or asks how to structure data for tax calculations, provide a clear copyable data format template.\n"
+        "4. CALCULATIONS: Always invoke `calculate_usmca_import_duties` when financial values are available.\n"
+        "5. RECOMMENDATIONS: End every response with concrete, step-by-step recommendations on how to proceed with the clearance or export process."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
@@ -212,59 +179,57 @@ with st.sidebar:
 if st.session_state.lang == "English":
     title_text = "📦 USMCA / T-MEC Autonomous Trade Agent"
     desc_text = """
-    > **Specialized USMCA (US-Mexico-Canada) Compliance Assistant**  
-    > 1. **Strict Language Matching**: Ask questions in English or Spanish, and receive full responses in your selected language.  
-    > 2. **USMCA Trade Tools**: Queries USMCA tariff schedules and calculates landed duties (*CIF, IGE, DTA, VAT*).  
+    > **Specialized USMCA (US-Mexico-Canada) Compliance & Calculations Assistant**  
+    > 1. **Legal Framework**: Contextualized rules (*Ley Aduanera, TIGIE, USMCA Chapter 5, NOMs*).  
+    > 2. **Duty Calculations**: Automatic landed-cost estimation (*CIF, IGE, DTA, VAT*).  
+    > 3. **Actionable Recommendations**: Step-by-step guidance for trade operations.
     """
     input_placeholder = "Describe your USMCA shipment..."
     status_label = "🧠 Agent is analyzing query and invoking USMCA tools..."
     tool_exec_label = "🛠️ **Executing Tool:**"
     tool_obs_label = "👁️ **Tool Observation:**"
     result_header = "### 📝 Compliance Assessment & Action Plan:"
-    gen_pdf_label = "📄 Export Response as Official PDF Report"
-    download_btn_label = "⬇️ Download Generated PDF"
+    template_header = "💡 **Sample Input Template for Tax Calculations**"
+    template_code = """Invoice Value: $50,000 USD
+Freight: $2,500 USD
+Insurance: $500 USD
+Tariff Rate (IGE): 10%
+Has USMCA Certificate of Origin: Yes"""
 else:
     title_text = "📦 Agente Autónomo de Comercio Exterior T-MEC"
     desc_text = """
-    > **Asistente Especializado en Cumplimiento T-MEC (México-EUA-Canadá)**  
-    > 1. **Correspondencia de Idioma**: Formule preguntas en Inglés o Español y reciba respuestas completas en ese idioma.  
-    > 2. **Herramientas T-MEC**: Consulta la TIGIE y calcula impuestos (*CIF, IGE, DTA, IVA*).  
+    > **Asistente Especializado en Cumplimiento y Cálculos T-MEC (México-EUA-Canadá)**  
+    > 1. **Marco Legal**: Contexto regulatorio (*Ley Aduanera, TIGIE, Capítulo 5 T-MEC, NOMs*).  
+    > 2. **Cálculo de Impuestos**: Estimación de costos CIF, IGE, DTA e IVA.  
+    > 3. **Recomendaciones**: Pasos concretos para proceder con su trámite aduanal.
     """
     input_placeholder = "Describa su embarque T-MEC..."
     status_label = "🧠 El Agente está evaluando la consulta y ejecutando herramientas..."
     tool_exec_label = "🛠️ **Ejecutando Herramienta:**"
     tool_obs_label = "👁️ **Observación de Herramienta:**"
     result_header = "### 📝 Dictamen y Plan de Acción:"
-    gen_pdf_label = "📄 Exportar Respuesta como Reporte Oficial en PDF"
-    download_btn_label = "⬇️ Descargar Reporte PDF Generado"
+    template_header = "💡 **Plantilla de Ejemplo para Cálculo de Impuestos**"
+    template_code = """Valor Factura: $50,000 USD
+Flete: $2,500 USD
+Seguro: $500 USD
+Tasa Arancelaria (IGE): 10%
+Cuenta con Certificado de Origen T-MEC: Sí"""
 
 st.title(title_text)
 st.markdown(desc_text)
+
+# Interactive Expander: Sample Format Template
+with st.expander(template_header):
+    st.code(template_code, language="yaml")
 
 # Initialize Session Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # Display Message History
-for idx, msg in enumerate(st.session_state.messages):
+for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        
-        # Render Export PDF Button for assistant responses
-        if msg["role"] == "assistant":
-            if st.button(gen_pdf_label, key=f"btn_export_{idx}"):
-                pdf_file = create_pdf_report("USMCA Trade Compliance Report", msg["content"])
-                st.session_state[f"pdf_{idx}"] = pdf_file
-            
-            if f"pdf_{idx}" in st.session_state and os.path.exists(st.session_state[f"pdf_{idx}"]):
-                with open(st.session_state[f"pdf_{idx}"], "rb") as file:
-                    st.download_button(
-                        label=download_btn_label,
-                        data=file,
-                        file_name="USMCA_Compliance_Report.pdf",
-                        mime="application/pdf",
-                        key=f"dl_history_{idx}"
-                    )
 
 # User Input Loop
 if prompt := st.chat_input(input_placeholder):
@@ -313,24 +278,13 @@ if prompt := st.chat_input(input_placeholder):
             st.markdown(result_header)
             st.markdown(final_answer)
 
-            # Append to session history
-            st.session_state.messages.append({"role": "assistant", "content": final_answer})
-            
-            # Interactive On-Demand PDF Export for current turn
-            current_idx = len(st.session_state.messages) - 1
-            if st.button(gen_pdf_label, key=f"btn_export_active"):
-                pdf_file = create_pdf_report("USMCA Trade Compliance Report", final_answer)
-                st.session_state[f"pdf_{current_idx}"] = pdf_file
+            # Interactive Quick Copy Box
+            st.markdown("---")
+            st.caption("📋 **Quick Copy Response Content**")
+            st.code(final_answer, language="text")
 
-            if f"pdf_{current_idx}" in st.session_state and os.path.exists(st.session_state[f"pdf_{current_idx}"]):
-                with open(st.session_state[f"pdf_{current_idx}"], "rb") as file:
-                    st.download_button(
-                        label=download_btn_label,
-                        data=file,
-                        file_name="USMCA_Compliance_Report.pdf",
-                        mime="application/pdf",
-                        key=f"dl_active"
-                    )
+            # Append message to history
+            st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
         except Exception as e:
             st.error(f"Execution Error: {str(e)}")
