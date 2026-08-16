@@ -187,7 +187,7 @@ with st.sidebar:
                 msg = "No PDFs found in ./pdf_files_comercio_exterior" if st.session_state.lang == "English" else "No se encontraron PDFs."
                 st.warning(msg)
 
-# Localization
+# Localization Setup
 if st.session_state.lang == "English":
     title_text = "📦 USMCA / T-MEC Autonomous Trade Agent"
     desc_text = "> **Specialized USMCA (US-Mexico-Canada) Compliance Assistant**"
@@ -213,12 +213,10 @@ st.markdown(desc_text)
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Persistent Message Rendering
+# 1. Render Historical Messages & Persistent PDF Buttons
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        
-        # Render persistent download button under the corresponding assistant message
         if msg["role"] == "assistant" and "pdf_path" in msg and os.path.exists(msg["pdf_path"]):
             with open(msg["pdf_path"], "rb") as file:
                 st.download_button(
@@ -229,7 +227,7 @@ for idx, msg in enumerate(st.session_state.messages):
                     key=f"dl_history_{idx}"
                 )
 
-# User Input Loop
+# 2. Handle New User Input
 if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -255,7 +253,7 @@ if prompt := st.chat_input(input_placeholder):
                 elapsed = time.time() - start_time
                 status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # Robust Response Extraction
+            # Extract AI Text Safely
             ai_texts = []
             for msg in response["messages"]:
                 if msg.type == "ai" and hasattr(msg, 'content'):
@@ -271,7 +269,7 @@ if prompt := st.chat_input(input_placeholder):
             st.markdown(result_header)
             st.markdown(final_answer)
 
-            # Generate PDF and attach path directly to the assistant message dict
+            # Generate Report PDF and save path to history
             generated_pdf_path = build_pdf_report(
                 title="USMCA Trade Compliance Report", 
                 body_text=final_answer,
@@ -284,7 +282,7 @@ if prompt := st.chat_input(input_placeholder):
                 "pdf_path": generated_pdf_path
             })
 
-            # Render immediate download button for the active turn
+            # Render Active Download Button
             with open(generated_pdf_path, "rb") as file:
                 st.download_button(
                     label=pdf_btn_text,
