@@ -138,8 +138,10 @@ def calculate_us_import_duties(
 
 tools = [search_trade_regulations, calculate_mexican_import_duties, calculate_us_import_duties]
 
+
+
 # ==============================================================================
-# 3. Agent Configuration (Google Gemini 2.5 Flash)
+# 3. Agent Configuration (Google Gemini)
 # ==============================================================================
 @st.cache_resource
 def get_trade_agent():
@@ -147,11 +149,12 @@ def get_trade_agent():
     if not api_key:
         st.error("GOOGLE_API_KEY not configured. Please add it to your environment or Streamlit secrets.")
         st.stop()
+    
+    os.environ["GOOGLE_API_KEY"] = api_key
         
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        temperature=0.1,
-        google_api_key=api_key
+        model="gemini-3.5-flash",  # Active stable production model string
+        temperature=0.1
     )
     
     system_prompt = (
@@ -166,6 +169,8 @@ def get_trade_agent():
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
+
+
 
 # ==============================================================================
 # 4. Streamlit User Interface
