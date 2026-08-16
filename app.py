@@ -114,10 +114,9 @@ def calculate_us_import_duties(
     Handles USMCA preferential rate (0% for originating goods) and Merchandise Processing Fee (MPF) exemption.
     """
     entered_value = invoice_value_usd + freight_usd + insurance_usd
-    duty_rate = 0.0 if has_usmca_certificate else 0.112  # Standard MFN vs preferential rate
+    duty_rate = 0.0 if has_usmca_certificate else 0.112  
     duty_amount = entered_value * duty_rate
     
-    # Shipments originating in MX under USMCA are exempt from MPF under 19 CFR 24.23(c)(3)
     mpf_fee = 0.0 if has_usmca_certificate else max(31.67, min(614.35, entered_value * 0.003464))
     total_duties = duty_amount + mpf_fee
     
@@ -192,7 +191,7 @@ def get_trade_agent():
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.1,
-        max_tokens=4096,  # Prevents mid-stream tool JSON truncation
+        max_tokens=4096,
         api_key=api_key
     )
     
@@ -205,7 +204,7 @@ def get_trade_agent():
         "   - Exports from Mexico to the US (e.g., Texas): Use `calculate_us_import_duties` to evaluate US CBP entry rules.\n"
         "   - Imports into Mexico: Use `calculate_mexican_import_duties` for Pedimento tax calculation.\n"
         "3. TOOL CALLING: Execute `search_trade_regulations` for legal validation and `generate_customs_compliance_report` whenever a PDF is requested.\n"
-        "4. FINAL TEXT SUMMARY: You MUST write a complete final answer in the chat after executing tools. Summarize duty totals, HTS codes, phytosanitary requirements (USDA/SENASICA/FDA if applicable), and confirm the PDF report is ready."
+        "4. FINAL TEXT SUMMARY: Write a complete final answer in the chat after executing tools. Summarize duty totals, HTS codes, phytosanitary requirements (USDA/SENASICA/FDA), and confirm PDF generation."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
@@ -232,28 +231,39 @@ with st.sidebar:
             else:
                 st.warning("No PDFs found to index in ./pdf_files_comercio_exterior.")
 
+    # Persistent Sidebar Download Button
+    if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
+        st.markdown("---")
+        st.markdown("### 📄 Downloads")
+        pdf_path = st.session_state['latest_pdf_generated']
+        with open(pdf_path, "rb") as file:
+            st.download_button(
+                label="📥 Download Compliance Report (PDF)",
+                data=file,
+                file_name="USMCA_Customs_Compliance_Report.pdf",
+                mime="application/pdf",
+                key="sidebar_pdf_download"
+            )
+
 st.title("📦 USMCA / T-MEC Autonomous Customs Agent")
 st.caption("AI-Powered Compliance Engine, Cross-Border Duty Calculator, and PDF Audit Automation")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render chat history
-for msg in st.session_state.messages:
+# Render chat history with embedded download buttons if a message spawned a PDF
+for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-
-# Persistent PDF Download Button
-if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
-    pdf_path = st.session_state['latest_pdf_generated']
-    with open(pdf_path, "rb") as file:
-        st.download_button(
-            label="📄 Download USMCA Compliance Report (PDF)",
-            data=file,
-            file_name="USMCA_Customs_Compliance_Report.pdf",
-            mime="application/pdf",
-            key="pdf_download_button"
-        )
+        if msg.get("pdf_path") and os.path.exists(msg["pdf_path"]):
+            with open(msg["pdf_path"], "rb") as file:
+                st.download_button(
+                    label="📄 Download USMCA Report (PDF)",
+                    data=file,
+                    file_name="USMCA_Customs_Compliance_Report.pdf",
+                    mime="application/pdf",
+                    key=f"hist_pdf_download_{idx}"
+                )
 
 # Chat Input Loop
 if prompt := st.chat_input("Enter shipment details, calculate cross-border duties, or request a PDF compliance report..."):
@@ -294,20 +304,32 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
                             final_answer = "\n".join(text_parts).strip()
                             break
 
-            # Backup extraction if AI message was empty
             if not final_answer:
                 tool_outputs = [str(m.content) for m in response["messages"] if m.type == "tool"]
-                if tool_outputs:
-                    final_answer = "### 📝 Execution Summary:\n\n" + "\n\n".join(tool_outputs)
-                else:
-                    final_answer = "USMCA trade analysis completed."
+                final_answer = "### 📝 Execution Summary:\n\n" + "\n\n".join(tool_outputs) if tool_outputs else "USMCA trade analysis completed."
 
             st.markdown(final_answer)
-            st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
-            # Refresh UI to display the PDF download button immediately
-            if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
-                st.rerun()
+            # Render Download Button immediately in current response turn
+            generated_pdf = st.session_state.get('latest_pdf_generated')
+            has_pdf = generated_pdf and os.path.exists(generated_pdf)
+            
+            if has_pdf:
+                with open(generated_pdf, "rb") as file:
+                    st.download_button(
+                        label="📄 Download USMCA Compliance Report (PDF)",
+                        data=file,
+                        file_name="USMCA_Customs_Compliance_Report.pdf",
+                        mime="application/pdf",
+                        key=f"turn_pdf_download_{len(st.session_state.messages)}"
+                    )
+
+            # Append to history with pdf reference
+            st.session_state.messages.append({
+                "role": "assistant", 
+                "content": final_answer,
+                "pdf_path": generated_pdf if has_pdf else None
+            })
 
         except Exception as e:
             st.error(f"Execution Error: {str(e)}")
