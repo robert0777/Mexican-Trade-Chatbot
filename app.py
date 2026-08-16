@@ -119,7 +119,7 @@ def calculate_usmca_import_duties(invoice_value: float, freight: float, insuranc
 def generate_usmca_pdf_report(title: str, executive_summary: str, cost_breakdown: str, document_checklist: str) -> str:
     """
     Generates a downloadable official USMCA compliance PDF report and document checklist in English or Spanish.
-    Call this tool whenever the user requests a PDF report, official dictamen, or downloadable summary.
+    ALWAYS call this tool whenever the user asks for a PDF, report, dictamen, checklist, or downloadable summary.
     """
     pdf_filename = "USMCA_Customs_Compliance_Report.pdf"
     pdf_path = Path(pdf_filename)
@@ -176,34 +176,29 @@ def generate_usmca_pdf_report(title: str, executive_summary: str, cost_breakdown
 tools = [search_usmca_trade_regulations, calculate_usmca_import_duties, generate_usmca_pdf_report]
 
 # ==============================================================================
-# 3. Agent Executor Initialization (Strict Language & PDF Instruction)
+# 3. Agent Executor Initialization
 # ==============================================================================
 @st.cache_resource
 def get_agent_executor():
     api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
     if not api_key:
-        st.error("NVIDIA_API_KEY not configured. Add it to .env or st.secrets.")
+        st.error("NVIDIA_API_KEY not configured.")
         st.stop()
         
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        temperature=0.1,
+        temperature=0.1,        
         api_key=api_key,
-        timeout=180,  
+        timeout=180,            
         max_retries=3  
     )
     
     system_prompt = (
-        "You are an expert Autonomous Trade Agent focusing strictly on USMCA / T-MEC trade between Mexico, the USA, and Canada.\n"
-        "CRITICAL LANGUAGE RULE:\n"
-        "- If the user writes in English, you MUST respond ENTIRELY in English.\n"
-        "- If the user writes in Spanish, you MUST respond ENTIRELY in Spanish.\n"
-        "- NEVER respond in Spanish if the user asked their question in English, even if the retrieved legal PDF context is in Spanish. Translate the context into English.\n"
-        "PDF GENERATION RULE:\n"
-        "- Whenever the user asks for a PDF, report, dictamen, checklist, or downloadable summary, YOU MUST CALL the `generate_usmca_pdf_report` tool.\n"
-        "- Provide well-formatted string arguments for title, executive_summary, cost_breakdown, and document_checklist in the user's language.\n"
-        "REASONING & TOOLS:\n"
-        "- Use tools autonomously to search USMCA regulations, compute duties, or export PDF reports."
+        "You are an expert Autonomous Trade Agent focusing strictly on USMCA / T-MEC trade.\n"
+        "1. LANGUAGE: Respond strictly in the language used by the user.\n"
+        "2. CALCULATIONS: Always invoke `calculate_usmca_import_duties` when financial values are provided.\n"
+        "3. PDF REPORTS: Whenever the user explicitly asks for a PDF, report, dictamen, checklist, or document download, YOU MUST CALL the `generate_usmca_pdf_report` tool.\n"
+        "4. EXPOSED TAGS: Never output raw XML, HTML, or tool tags directly in your final user-facing text."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
@@ -297,7 +292,7 @@ if prompt := st.chat_input(input_placeholder):
                 start_time = time.time()
                 response = agent_executor.invoke({"messages": [("user", prompt)]})
                 
-                # Render intermediate tool execution steps
+                # Render intermediate tool execution steps safely
                 for message in response["messages"]:
                     if hasattr(message, 'tool_calls') and message.tool_calls:
                         for tool_call in message.tool_calls:
@@ -305,25 +300,29 @@ if prompt := st.chat_input(input_placeholder):
                             st.json(tool_call['args'])
                     elif message.type == "tool":
                         st.write(tool_obs_label)
-                        st.caption(str(message.content)[:300] + "...")
+                        safe_content = str(message.content).replace("<", "&lt;").replace(">", "&gt;")
+                        st.caption(safe_content[:300] + "...")
                         
                 elapsed = time.time() - start_time
                 status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # --- IMPROVED ANSWER EXTRACTION ---
+            # Answer Extraction & Sanitization
             ai_texts = []
             for msg in response["messages"]:
                 if msg.type == "ai" and hasattr(msg, 'content'):
                     if isinstance(msg.content, str) and msg.content.strip():
-                        ai_texts.append(msg.content.strip())
+                        clean_text = msg.content.strip().replace("<TOOL_CALLS>", "").replace("</TOOL_CALLS>", "")
+                        if clean_text:
+                            ai_texts.append(clean_text)
                     elif isinstance(msg.content, list):
                         for block in msg.content:
                             if isinstance(block, dict) and block.get("type") == "text":
-                                ai_texts.append(block.get("text", ""))
+                                txt = block.get("text", "").replace("<TOOL_CALLS>", "").replace("</TOOL_CALLS>", "")
+                                if txt:
+                                    ai_texts.append(txt)
 
             final_answer = "\n\n".join(ai_texts)
 
-            # Fallback if the agent executed tools but wrote minimal text
             if not final_answer:
                 if 'latest_pdf_generated' in st.session_state:
                     final_answer = "✅ USMCA compliance assessment completed and official PDF report generated successfully."
@@ -334,7 +333,7 @@ if prompt := st.chat_input(input_placeholder):
             st.markdown(result_header)
             st.markdown(final_answer)
             
-            # Direct Download Button rendering without forcing st.rerun()
+            # Render Download Button directly
             if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
                 pdf_path = st.session_state['latest_pdf_generated']
                 with open(pdf_path, "rb") as file:
