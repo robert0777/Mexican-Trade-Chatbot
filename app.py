@@ -17,11 +17,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 load_dotenv()
 
 # ==============================================================================
-# 1. FAISS Vector Database Engine (RAG)
+# 1. FAISS Vector Database Engine (RAG over All Trade PDFs)
 # ==============================================================================
 @st.cache_resource(show_spinner=False)
 def initialize_trade_vector_db():
-    """Builds or loads a FAISS vector store for trade regulations and USMCA laws."""
+    """Builds or loads a FAISS vector store for all loaded trade regulations, HTS, TIGIE, and laws."""
     pdf_dir = Path("./pdf_files_comercio_exterior")
     if not pdf_dir.exists():
         pdf_dir.mkdir(parents=True, exist_ok=True)
@@ -41,19 +41,19 @@ def initialize_trade_vector_db():
     return FAISS.from_documents(split_docs, embeddings)
 
 # ==============================================================================
-# 2. Autonomous Trade Agent Tools (Direct UI Calculations)
+# 2. Autonomous Universal Trade Agent Tools
 # ==============================================================================
 @tool
 def search_trade_regulations(query: str) -> str:
     """
-    Searches loaded trade PDFs regarding Ley Aduanera, TIGIE tariffs, HTS classifications,
-    Anexo 22, USMCA/T-MEC rules of origin, and agricultural/NOM compliance standards.
+    Searches loaded trade PDFs (HTS 2026, LIGIE/TIGIE, Ley Aduanera, Anexo 22, 
+    USMCA rules of origin, MOA, CFF, and Ley del IVA) for legal grounding on ANY product or service.
     """
     vectorstore = initialize_trade_vector_db()
     if not vectorstore:
-        return "No local trade regulation PDFs loaded in memory."
+        return "No trade regulation PDFs found in memory."
     
-    results = vectorstore.similarity_search(query, k=4)
+    results = vectorstore.similarity_search(query, k=5)
     return "\n\n".join([f"[Source: {Path(d.metadata.get('source', 'Doc')).name}]\n{d.page_content}" for d in results])
 
 @tool
@@ -67,7 +67,7 @@ def calculate_mexican_import_duties(
     apply_border_vat: bool = False
 ) -> dict:
     """
-    Calculates Mexican customs duties (Pedimento structure) in MXN:
+    Calculates Mexican customs duties (Pedimento structure) in MXN for any imported good:
     CIF Base, Ad-Valorem Duty (IGE), Customs Processing Fee (DTA), 
     Prevalidation (PRV), Value Added Tax (IVA 16% or 8%), and Total Payable Taxes.
     """
@@ -100,17 +100,19 @@ def calculate_us_import_duties(
     invoice_value_usd: float,
     freight_usd: float = 0.0,
     insurance_usd: float = 0.0,
-    hts_code: str = "0804.40.00",
+    hts_code: str = "0000.00.00",
+    standard_mfn_rate: float = 0.0,
     has_usmca_certificate: bool = True
 ) -> dict:
     """
-    Calculates US Customs (CBP) entry duties and fees for exports entering the USA.
-    Handles USMCA preferential rate (0% for originating goods) and Merchandise Processing Fee (MPF) exemption.
+    Calculates US Customs (CBP) entry duties and fees for any product entering the USA.
+    Handles USMCA preferential rates (0% for originating goods) and Merchandise Processing Fee (MPF) exemptions.
     """
     entered_value = invoice_value_usd + freight_usd + insurance_usd
-    duty_rate = 0.0 if has_usmca_certificate else 0.112  
+    duty_rate = 0.0 if has_usmca_certificate else standard_mfn_rate  
     duty_amount = entered_value * duty_rate
     
+    # MPF Exemption under 19 CFR 24.23(c)(3) for USMCA originating goods
     mpf_fee = 0.0 if has_usmca_certificate else max(31.67, min(614.35, entered_value * 0.003464))
     total_duties = duty_amount + mpf_fee
     
@@ -143,21 +145,24 @@ def get_trade_agent():
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.1,
-        max_tokens=2048,
-        timeout=180,  # Extended socket timeout to eliminate HTTPS Read Timeout errors
+        max_tokens=4096,
+        timeout=180,
         api_key=api_key
     )
     
     system_prompt = (
-        "You are an expert Autonomous Customs & Trade Agent specializing in USMCA/T-MEC regulations, "
-        "Mexican Customs Law (Ley Aduanera), US Customs (CBP) entries, and agricultural export rules.\n\n"
-        "OPERATIONAL RULES:\n"
-        "1. LANGUAGE: Match the user's input language (English or Spanish) in all responses.\n"
-        "2. CROSS-BORDER DIRECTION:\n"
-        "   - Exports from Mexico to the US (e.g., Texas): Use `calculate_us_import_duties` to evaluate US CBP entry rules.\n"
-        "   - Imports into Mexico: Use `calculate_mexican_import_duties` for Pedimento tax calculation.\n"
-        "3. TOOL CALLING: Execute `search_trade_regulations` for legal validation.\n"
-        "4. UI PRESENTATION: Present final calculations, duty breakdowns, HTS codes, and required compliance documents (USDA/SENASICA/FDA) directly in clear, beautifully formatted Markdown in the chat."
+        "You are an expert Universal Autonomous Customs & Trade Agent specializing in international trade, "
+        "USMCA/T-MEC regulations, Mexican Customs Law (Ley Aduanera), TIGIE/NICO classifications, US HTS 2026, "
+        "Anexo 22 Pedimentos, and cross-border regulatory compliance for ANY product or service.\n\n"
+        "OPERATIONAL INSTRUCTIONS:\n"
+        "1. LANGUAGE: Respond strictly in the language used by the user (English or Spanish).\n"
+        "2. DIRECTIONAL LOGIC:\n"
+        "   - For exports to the United States: Use `calculate_us_import_duties` to evaluate US CBP rules and HTS rates.\n"
+        "   - For imports into Mexico: Use `calculate_mexican_import_duties` for Pedimento tax structure calculations.\n"
+        "3. KNOWLEDGE LOOKUP: Always execute `search_trade_regulations` to verify specific HTS/TIGIE codes, Anexo 22 identifiers, "
+        "or regulatory permits (e.g., USDA, FDA, NOMs, SAGARPA, SENER, COFEPRIS) relevant to the given product.\n"
+        "4. CHAT OUTPUT: Provide clear, beautifully formatted Markdown in your final answer including tariff classification, "
+        "duty breakdowns, required documentation, and step-by-step clearance instructions."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
@@ -165,7 +170,7 @@ def get_trade_agent():
 # ==============================================================================
 # 4. Streamlit Interactive Interface
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="USMCA Customs Agent", page_icon="🛃")
+st.set_page_config(layout="wide", page_title="Universal USMCA Customs Desk", page_icon="🛃")
 
 with st.sidebar:
     st.title("🛃 Operational Panel")
@@ -176,7 +181,7 @@ with st.sidebar:
     st.markdown("**Author:** Dr. Robert Hernández Martínez")
     st.markdown("---")
     
-    if st.button("🔄 Index Custom Regulations"):
+    if st.button("🔄 Index All Custom Regulations"):
         with st.spinner("Indexing vector database from ./pdf_files_comercio_exterior..."):
             v_db = initialize_trade_vector_db()
             if v_db:
@@ -184,8 +189,8 @@ with st.sidebar:
             else:
                 st.warning("No PDFs found to index in ./pdf_files_comercio_exterior.")
 
-st.title("📦 USMCA / T-MEC Autonomous Customs Desk")
-st.caption("AI-Powered Compliance Engine and Cross-Border Duty Calculator")
+st.title("📦 Universal USMCA / T-MEC Autonomous Trade Desk")
+st.caption("AI Agent for Cross-Border Duty Calculation, Tariff Classification & Regulatory Compliance across All Products")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -196,7 +201,7 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # Chat Input Loop
-if prompt := st.chat_input("Enter shipment details, calculate cross-border duties, or inquire about rules of origin..."):
+if prompt := st.chat_input("Ask about any product import/export, calculate duties, or verify USMCA rules of origin..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -205,7 +210,7 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
         try:
             agent = get_trade_agent()
             
-            with st.status("Evaluating trade regulations and executing agent tools...", expanded=True) as status:
+            with st.status("Analyzing product compliance and executing trade tools...", expanded=True) as status:
                 start_time = time.time()
                 response = agent.invoke({"messages": [("user", prompt)]})
                 
@@ -219,9 +224,9 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
                         st.caption(str(message.content)[:300] + "...")
 
                 elapsed = time.time() - start_time
-                status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
+                status.update(label=f"Analysis complete in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # Extract narrative answer from the response
+            # Robust response parsing
             final_answer = ""
             for msg in reversed(response["messages"]):
                 if msg.type == "ai":
@@ -237,7 +242,7 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
 
             if not final_answer:
                 tool_outputs = [str(m.content) for m in response["messages"] if m.type == "tool"]
-                final_answer = "### 📝 Execution Summary:\n\n" + "\n\n".join(tool_outputs) if tool_outputs else "USMCA trade assessment complete."
+                final_answer = "### 📝 Execution Summary:\n\n" + "\n\n".join(tool_outputs) if tool_outputs else "USMCA trade analysis completed."
 
             st.markdown(final_answer)
             st.session_state.messages.append({"role": "assistant", "content": final_answer})
