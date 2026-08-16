@@ -1,241 +1,263 @@
 import streamlit as st
 import os
-import time
+import re
+import datetime
 from pathlib import Path
+from functools import lru_cache
 from dotenv import load_dotenv
+import tiktoken
 
-# LangChain, LangGraph & Google Gemini Imports
-from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from langgraph.prebuilt import create_react_agent
+from openai import OpenAI
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Load environment variables
 load_dotenv()
 
-INDEX_PATH = "./faiss_index_trade"
-PDF_DIR = "./pdf_files_comercio_exterior"
+# --- GREETING HANDLER FOR CUSTOMS ADVISORY ---
+class TradeGreetingHandler:
+    def __init__(self):
+        self.greetings = {
+            'hola', 'buenos días', 'buenas tardes', 'buenas noches', 'saludos',
+            'qué tal', 'cómo estás', 'mucho gusto', 'hey', 'hi', 'hello', 'buen día'
+        }
+        self.greeting_pattern = re.compile(
+            '|'.join(r'\b{}\b'.format(re.escape(g)) for g in self.greetings),
+            re.IGNORECASE
+        )
 
-# ==============================================================================
-# 1. FAISS Vector Database Engine (Google Embeddings)
-# ==============================================================================
-@st.cache_resource(show_spinner=False)
-def initialize_trade_vector_db(force_reindex: bool = False):
-    """Builds or loads a FAISS vector store using Google's text-embedding-004 model."""
-    api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
-    if not api_key:
-        return None
+    def normalize_text(self, text: str) -> str:
+        text = text.lower()
+        replacements = {'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u', 'ü': 'u', 'ñ': 'n'}
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return text
 
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004", 
-        google_api_key=api_key
-    )
-    
-    # 1. Load existing local index if available
-    if Path(INDEX_PATH).exists() and not force_reindex:
-        try:
-            return FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-        except Exception:
-            pass # Rebuild if loading fails
+    def extract_question(self, text: str) -> str:
+        matches = list(self.greeting_pattern.finditer(text))
+        if not matches:
+            return text
+        last_match_end = matches[-1].end()
+        question = text[last_match_end:].strip(' ,.!?¿¡')
+        return question if question else ""
+
+    def process_input(self, user_input: str) -> tuple[bool, str | None, str | None]:
+        if not user_input:
+            return False, None, None
             
-    # 2. Build index from directory if missing
-    pdf_dir = Path(PDF_DIR)
-    if not pdf_dir.exists():
-        pdf_dir.mkdir(parents=True, exist_ok=True)
-        return None
-
-    loader = PyPDFDirectoryLoader(path=str(pdf_dir), silent_errors=True)
-    docs = loader.load()
-    if not docs:
-        return None
-
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
-    split_docs = text_splitter.split_documents(docs)
-
-    vectorstore = FAISS.from_documents(split_docs, embeddings)
-    vectorstore.save_local(INDEX_PATH)
-    return vectorstore
-
-# ==============================================================================
-# 2. Autonomous Trade Agent Tools
-# ==============================================================================
-@tool
-def search_trade_regulations(query: str) -> str:
-    """
-    Searches loaded trade PDFs (HTS 2026, LIGIE/TIGIE, Ley Aduanera, Anexo 22, 
-    USMCA rules of origin, MOA, CFF, and Ley del IVA) for legal grounding.
-    """
-    vectorstore = initialize_trade_vector_db()
-    if not vectorstore:
-        return "No trade regulation PDFs found in memory."
-    
-    results = vectorstore.similarity_search(query, k=2)
-    return "\n\n".join([f"[Source: {Path(d.metadata.get('source', 'Doc')).name}]\n{d.page_content}" for d in results])
-
-@tool
-def calculate_mexican_import_duties(
-    invoice_value_usd: float,
-    freight_usd: float = 0.0,
-    insurance_usd: float = 0.0,
-    exchange_rate_mxn: float = 20.0,
-    ige_duty_rate: float = 0.0,
-    has_usmca_certificate: bool = True,
-    apply_border_vat: bool = False
-) -> dict:
-    """Calculates Mexican customs duties (Pedimento structure) in MXN for any imported good."""
-    cif_usd = invoice_value_usd + freight_usd + insurance_usd
-    cif_mxn = cif_usd * exchange_rate_mxn
-    
-    effective_ige = 0.0 if has_usmca_certificate else ige_duty_rate
-    ige_amount = cif_mxn * effective_ige
-    dta_amount = 410.0 if has_usmca_certificate else max(410.0, cif_mxn * 0.008)
-    prv_amount = 310.0
-    
-    vat_rate = 0.08 if apply_border_vat else 0.16
-    taxable_base_iva = cif_mxn + ige_amount + dta_amount
-    iva_amount = taxable_base_iva * vat_rate
-    
-    total_taxes_mxn = ige_amount + dta_amount + prv_amount + iva_amount
-    
-    return {
-        "cif_value_usd": round(cif_usd, 2),
-        "cif_value_mxn": round(cif_mxn, 2),
-        "ige_duty_mxn": round(ige_amount, 2),
-        "dta_fee_mxn": round(dta_amount, 2),
-        "prv_fee_mxn": round(prv_amount, 2),
-        "iva_vat_mxn": round(iva_amount, 2),
-        "total_payable_taxes_mxn": round(total_taxes_mxn, 2)
-    }
-
-@tool
-def calculate_us_import_duties(
-    invoice_value_usd: float,
-    freight_usd: float = 0.0,
-    insurance_usd: float = 0.0,
-    hts_code: str = "0000.00.00",
-    standard_mfn_rate: float = 0.0,
-    has_usmca_certificate: bool = True
-) -> dict:
-    """Calculates US Customs (CBP) entry duties and fees for any product entering the USA."""
-    entered_value = invoice_value_usd + freight_usd + insurance_usd
-    duty_rate = 0.0 if has_usmca_certificate else standard_mfn_rate  
-    duty_amount = entered_value * duty_rate
-    
-    mpf_fee = 0.0 if has_usmca_certificate else max(31.67, min(614.35, entered_value * 0.003464))
-    total_duties = duty_amount + mpf_fee
-    
-    return {
-        "entered_value_usd": round(entered_value, 2),
-        "hts_code": hts_code,
-        "usmca_duty_rate": "0.0%" if has_usmca_certificate else f"{duty_rate*100}%",
-        "customs_duty_usd": round(duty_amount, 2),
-        "usmca_mpf_exemption": has_usmca_certificate,
-        "mpf_fee_usd": round(mpf_fee, 2),
-        "total_us_duties_usd": round(total_duties, 2)
-    }
-
-tools = [search_trade_regulations, calculate_mexican_import_duties, calculate_us_import_duties]
-
-
-
-# ==============================================================================
-# 3. Agent Configuration (Google Gemini)
-# ==============================================================================
-@st.cache_resource
-def get_trade_agent():
-    api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
-    if not api_key:
-        st.error("GOOGLE_API_KEY not configured. Please add it to your environment or Streamlit secrets.")
-        st.stop()
-    
-    os.environ["GOOGLE_API_KEY"] = api_key
+        normalized_input = self.normalize_text(user_input)
+        is_greeting = bool(self.greeting_pattern.search(normalized_input))
+        actual_question = self.extract_question(user_input)
         
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",  # Active stable production model string
-        temperature=0.1
-    )
-    
-    system_prompt = (
-        "You are an expert Universal Autonomous Customs & Trade Agent.\n\n"
-        "OPERATIONAL INSTRUCTIONS:\n"
-        "1. LANGUAGE: Respond strictly in the language used by the user (English or Spanish).\n"
-        "2. DIRECTIONAL LOGIC:\n"
-        "   - For exports to the US: Use `calculate_us_import_duties`.\n"
-        "   - For imports into Mexico: Use `calculate_mexican_import_duties`.\n"
-        "3. KNOWLEDGE LOOKUP: Use `search_trade_regulations` to verify specific HTS/TIGIE codes or permits.\n"
-        "4. CHAT OUTPUT: Present clear Markdown summaries with duty breakdowns, HTS codes, and required documents."
-    )
-    
-    return create_react_agent(llm, tools, prompt=system_prompt)
-
-
-
-# ==============================================================================
-# 4. Streamlit User Interface
-# ==============================================================================
-st.set_page_config(layout="wide", page_title="Universal USMCA Customs Desk", page_icon="🛃")
-
-with st.sidebar:
-    st.title("🛃 Operational Panel")
-    selected_lang = st.radio("Interface Language / Idioma", ["English", "Español"], index=0, key="lang_radio")
-    st.session_state.lang = selected_lang
-    st.markdown("---")
-    st.markdown("**Author:** Dr. Robert Hernández Martínez")
-    st.markdown("---")
-    
-    if st.button("🔄 Re-Index Regulations"):
-        with st.spinner("Building local FAISS disk index with Gemini Embeddings..."):
-            v_db = initialize_trade_vector_db(force_reindex=True)
-            if v_db:
-                st.success("FAISS index saved locally to disk!")
+        current_hour = datetime.datetime.now().hour
+        if is_greeting:
+            if current_hour < 12:
+                greeting_response = "¡Buenos días! ¿En qué puedo asesorarle hoy en materia de comercio exterior, clasificación arancelaria o cumplimiento T-MEC?"
+            elif current_hour < 18:
+                greeting_response = "¡Buenas tardes! ¿En qué puedo asesorarle hoy en materia de comercio exterior, clasificación arancelaria o cumplimiento T-MEC?"
             else:
-                st.warning("No PDFs found in ./pdf_files_comercio_exterior")
+                greeting_response = "¡Buenas noches! ¿En qué puedo asesorarle hoy en materia de comercio exterior, clasificación arancelaria o cumplimiento T-MEC?"
+        else:
+            greeting_response = None
+            
+        return is_greeting, greeting_response, actual_question
 
-st.title("📦 Universal USMCA / T-MEC Autonomous Trade Desk")
-st.caption("Powered by Google Gemini 2.5 Flash for High-Speed Duty Calculation & Compliance")
+# --- UTILITIES & DOCUMENT PROCESSING ---
+@lru_cache(maxsize=None)
+def get_tokenizer():
+    return tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+def count_tokens(text):
+    tokenizer = get_tokenizer()
+    return len(tokenizer.encode(text))
 
-# Display conversation history
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+def get_pdf_files(directory="./pdf_files_comercio_exterior"):
+    pdf_dir = Path(directory)
+    pdf_files = sorted(pdf_dir.glob("*.pdf"))
+    if not pdf_files:
+        raise FileNotFoundError("No se encontraron regulaciones o documentos PDF en el directorio './pdf_files_comercio_exterior'")
+    return pdf_files
 
-# Interactive Chat Loop with Live Streaming
-if prompt := st.chat_input("Ask about any product import/export, calculate duties, or verify USMCA rules of origin..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+def normalize_spanish_text(text):
+    text = re.sub(r'\s+', ' ', text)
+    text = text.replace('Art.', 'Artículo').replace('Fracc.', 'Fracción')
+    return text.strip()
 
-    with st.chat_message("assistant"):
-        agent = get_trade_agent()
-        response_placeholder = st.empty()
+def load_trade_documents():
+    if "documents" not in st.session_state:
+        pdf_files = get_pdf_files()
         
+        chunk_size = min(1000, max(400, 600 * (50 / len(pdf_files))))
+        chunk_overlap = max(80, chunk_size // 8)
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=count_tokens,
+            separators=["\n\n", "\n", "Artículo", "ARTÍCULO", ".", ";", " ", ""]
+        )
+        
+        loader = PyPDFDirectoryLoader(
+            path="./pdf_files_comercio_exterior", 
+            silent_errors=True,
+            recursive=False
+        )
+        docs = loader.load()
+        
+        processed_docs = []
+        for doc in docs:
+            doc.page_content = normalize_spanish_text(doc.page_content)
+            processed_docs.append(doc)
+        
+        st.session_state.documents = text_splitter.split_documents(processed_docs)
+
+def calculate_chunk_relevance(chunk, question):
+    question_words = set(question.lower().split())
+    chunk_words = set(chunk.page_content.lower().split())
+    word_overlap = len(question_words.intersection(chunk_words))
+    length_factor = 1 / (len(chunk.page_content.split()) + 1)
+    return word_overlap * (1 - length_factor)
+
+def select_relevant_chunks(question, chunks, max_total_tokens=6000):
+    prompt_tokens = count_tokens(question) + 800
+    available_tokens = max_total_tokens - prompt_tokens
+    
+    scored_chunks = [(chunk, calculate_chunk_relevance(chunk, question)) for chunk in chunks]
+    scored_chunks.sort(key=lambda x: x[1], reverse=True)
+    
+    selected_chunks = []
+    used_documents = set()
+    current_tokens = 0
+    
+    for chunk, score in scored_chunks:
+        doc_name = Path(chunk.metadata['source']).name
+        chunk_tokens = count_tokens(chunk.page_content)
+        
+        if doc_name not in used_documents and current_tokens + chunk_tokens <= available_tokens:
+            selected_chunks.append(chunk)
+            used_documents.add(doc_name)
+            current_tokens += chunk_tokens
+            
+        if current_tokens >= available_tokens * 0.9:
+            break
+            
+    return selected_chunks
+
+# --- UI INITIALIZATION ---
+st.set_page_config(layout="wide", page_title="Agentic AI Mexican Customs & Trade SME", page_icon="🛃")
+
+st.header("🛃 Asistente Especialista en Comercio Exterior y Operaciones Aduaneras (México / USMCA / UE)")
+st.markdown("""
+Plataforma experta para la consulta de legislación aduanera, cálculo de contribuciones (IGIE, DTA, IVA), 
+verificación de Reglas de Origen T-MEC y generación de reportes de cumplimiento e impacto normativo.
+""")
+
+# Sidebar Setup
+with st.sidebar:
+    st.markdown("### 🛃 Agentic Trade SME")
+    st.markdown("---")
+    st.markdown("### 👤 Autor")
+    st.markdown("**Dr. Robert Hernández Martínez**")
+    st.markdown("""
+        <a href="https://chomchom216.medium.com/" target="_blank">📝 Artículos en Medium</a><br>
+        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" target="_blank">🎓 Publicaciones Académicas</a><br>
+        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" target="_blank">🏆 Credenciales</a><br>
+        <a href="https://github.com/robert0777" target="_blank">🐙 GitHub</a><br>
+        <a href="mailto:robert@actuariayfinanzas.net">📧 Contacto</a>
+    """, unsafe_allow_html=True)
+    st.markdown("---")
+    st.caption("© 2026 Mexican Customs AI Agent")
+
+# LLM Client Setup
+try:
+    nvidia_client = OpenAI(
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=os.getenv("NVIDIA_API_KEY")
+    )
+except Exception as e:
+    st.error(f"Error al inicializar cliente NVIDIA API: {str(e)}")
+    st.stop()
+
+# SYSTEM PROMPT FOR CUSTOMS SME
+TRADE_SME_PROMPT_TEMPLATE = """
+Eres un Agente Especialista Senior (SME) en Comercio Exterior y Legislación Aduanera Mexicana, operando en los corredores comerciales EE.UU.-México (T-MEC / USMCA) y Unión Europea-México (TLCUEM).
+
+Tu objetivo es guiar a importadores, exportadores y agentes aduanales en la toma de decisiones normativas y operativas.
+
+Instrucciones de Respuesta:
+1. **Análisis Normativo Riguroso**: Utiliza la legislación oficial presentada en las fuentes (Ley Aduanera, LIGIE, RGCE, CFF, Tratados Comerciales).
+2. **Cálculos Financieros e Impuestos**: Si la consulta requiere costos o impuestos, presenta las cifras desglosadas formalmente utilizando la notación y moneda correspondiente (ej. Valor en Aduana en USD $, Contribuciones en MXN $, Tasas % e IGIE/DTA/IVA).
+3. **Referencias Legales**: Cita explícitamente los Artículos, Leyes, Anexos o Reglas que respaldan la respuesta.
+4. **Opinión Experta & Disclaimers**: Proporciona tu opinión técnica clara e incluye las advertencias/deslindes de responsabilidad normativa aplicables.
+5. **Matriz RAID OBLIGATORIA**: Finaliza SIEMPRE tu informe con una tabla Markdown de Matriz RAID (Riesgos, Acciones, Incidentes/Issues, Decisiones).
+
+Contexto Legal Disponible:
+{context}
+
+Consulta del Usuario: {question}
+
+Reporte Técnico Formal:
+"""
+
+if 'greeting_handler' not in st.session_state:
+    st.session_state.greeting_handler = TradeGreetingHandler()
+
+# Interface Input
+user_query = st.text_input("Ingrese su consulta operativa o normativa de comercio exterior:")
+
+if st.button("Cargar y Procesar Regulaciones PDF"):
+    with st.spinner("Procesando archivos y compilando índice normativo en ./pdf_files_comercio_exterior..."):
         try:
-            with st.status("Evaluating trade regulations...", expanded=True) as status:
-                full_response = ""
-                for event in agent.stream({"messages": [("user", prompt)]}, stream_mode="values"):
-                    messages = event.get("messages", [])
-                    if messages:
-                        last_msg = messages[-1]
-                        if hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
-                            for tc in last_msg.tool_calls:
-                                st.write(f"🛠️ **Executing Tool:** `{tc['name']}`")
-                        elif last_msg.type == "ai" and last_msg.content and not getattr(last_msg, "tool_calls", None):
-                            if isinstance(last_msg.content, str):
-                                full_response = last_msg.content
-                                response_placeholder.markdown(full_response)
-                
-                status.update(label="Analysis complete", state="complete", expanded=False)
-
-            if not full_response:
-                full_response = "USMCA trade analysis completed."
-                response_placeholder.markdown(full_response)
-
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
+            start_time = datetime.datetime.now()
+            load_trade_documents()
+            duration = (datetime.datetime.now() - start_time).total_seconds()
+            st.success(f" Base documental cargada exitosamente en {duration:.2f} segundos.")
         except Exception as e:
-            st.error(f"Execution Error: {str(e)}")
+            st.error(f"Error al procesar la carpeta de regulaciones: {str(e)}")
+
+if user_query:
+    is_greeting, greeting_resp, actual_q = st.session_state.greeting_handler.process_input(user_query)
+    
+    if is_greeting and greeting_resp:
+        st.info(greeting_resp)
+        
+    if actual_q:
+        if "documents" in st.session_state:
+            try:
+                with st.spinner("Ejecutando análisis normativo y financiero..."):
+                    selected_chunks = select_relevant_chunks(actual_q, st.session_state.documents)
+                    
+                    docs_used = {}
+                    for chunk in selected_chunks:
+                        doc_name = Path(chunk.metadata['source']).name
+                        if doc_name not in docs_used:
+                            docs_used[doc_name] = []
+                        docs_used[doc_name].append(chunk.page_content)
+                    
+                    context_parts = [f"[Documento Legal: {doc}]\n" + "\n".join(texts) for doc, texts in docs_used.items()]
+                    context = "\n\n".join(context_parts)
+                    
+                    completion = nvidia_client.chat.completions.create(
+                        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                        messages=[
+                            {"role": "system", "content": "/think"},
+                            {"role": "user", "content": TRADE_SME_PROMPT_TEMPLATE.format(context=context, question=actual_q)}
+                        ],
+                        temperature=0.4,
+                        max_tokens=4000
+                    )
+                    
+                    st.markdown("### 📜 Dictamen de Cumplimiento y Análisis Técnico")
+                    st.write(completion.choices[0].message.content)
+                    
+                    st.markdown("---")
+                    with st.expander("📂 Ver extractos normativos consultados"):
+                        for doc_name, chunks in docs_used.items():
+                            st.write(f"**{doc_name}**")
+                            for c in chunks:
+                                st.caption(c)
+                                
+            except Exception as e:
+                st.error(f"Error durante el procesamiento: {str(e)}")
+        else:
+            st.warning("⚠️ Primero cargue los documentos ejecutando el botón 'Cargar y Procesar Regulaciones PDF'")
