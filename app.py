@@ -119,6 +119,7 @@ def calculate_usmca_import_duties(invoice_value: float, freight: float, insuranc
 def generate_usmca_pdf_report(title: str, executive_summary: str, cost_breakdown: str, document_checklist: str) -> str:
     """
     Generates a downloadable official USMCA compliance PDF report and document checklist in English or Spanish.
+    Call this tool whenever the user requests a PDF report, official dictamen, or downloadable summary.
     """
     pdf_filename = "USMCA_Customs_Compliance_Report.pdf"
     pdf_path = Path(pdf_filename)
@@ -175,7 +176,7 @@ def generate_usmca_pdf_report(title: str, executive_summary: str, cost_breakdown
 tools = [search_usmca_trade_regulations, calculate_usmca_import_duties, generate_usmca_pdf_report]
 
 # ==============================================================================
-# 3. Agent Executor Initialization (Strict Language Enforcement)
+# 3. Agent Executor Initialization (Strict Language & PDF Instruction)
 # ==============================================================================
 @st.cache_resource
 def get_agent_executor():
@@ -192,13 +193,15 @@ def get_agent_executor():
         max_retries=3  
     )
     
-    # Strict prompt forcing the response language to match the query language
     system_prompt = (
         "You are an expert Autonomous Trade Agent focusing strictly on USMCA / T-MEC trade between Mexico, the USA, and Canada.\n"
         "CRITICAL LANGUAGE RULE:\n"
         "- If the user writes in English, you MUST respond ENTIRELY in English.\n"
         "- If the user writes in Spanish, you MUST respond ENTIRELY in Spanish.\n"
         "- NEVER respond in Spanish if the user asked their question in English, even if the retrieved legal PDF context is in Spanish. Translate the context into English.\n"
+        "PDF GENERATION RULE:\n"
+        "- Whenever the user asks for a PDF, report, dictamen, checklist, or downloadable summary, YOU MUST CALL the `generate_usmca_pdf_report` tool.\n"
+        "- Provide well-formatted string arguments for title, executive_summary, cost_breakdown, and document_checklist in the user's language.\n"
         "REASONING & TOOLS:\n"
         "- Use tools autonomously to search USMCA regulations, compute duties, or export PDF reports."
     )
@@ -280,6 +283,18 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# --- Persistent PDF Download Button ---
+if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
+    pdf_path = st.session_state['latest_pdf_generated']
+    with open(pdf_path, "rb") as file:
+        st.download_button(
+            label=download_btn_label,
+            data=file,
+            file_name="USMCA_Compliance_Report.pdf",
+            mime="application/pdf",
+            key="persistent_pdf_download"
+        )
+
 # User Chat Loop
 if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -321,16 +336,9 @@ if prompt := st.chat_input(input_placeholder):
             st.markdown(result_header)
             st.markdown(final_answer)
             
-            # Display PDF Download Button if generated
+            # Trigger immediate UI refresh if a PDF was just generated
             if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
-                pdf_path = st.session_state['latest_pdf_generated']
-                with open(pdf_path, "rb") as file:
-                    st.download_button(
-                        label=download_btn_label,
-                        data=file,
-                        file_name="USMCA_Compliance_Report.pdf",
-                        mime="application/pdf"
-                    )
+                st.rerun()
 
             st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
