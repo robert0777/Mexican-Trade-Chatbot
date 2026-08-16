@@ -34,5 +34,5 @@ customs-agent-ai/
 ├── app.py                         # Main Streamlit application and Agent logic
 ├── requirements.txt               # Python dependencies
 ├── README.md                      # Project documentation
-├── .env.example                   # Template for environment variables
+├── .env                           # Template for environment variables
 └── pdf_files_comercio_exterior/   # Local directory for reference PDFs (Ley Aduanera, T-MEC, CFF, HTS)
