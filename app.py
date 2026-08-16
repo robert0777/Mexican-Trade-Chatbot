@@ -295,6 +295,7 @@ if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_stat
             key="persistent_pdf_download"
         )
 
+
 # User Chat Loop
 if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -322,25 +323,38 @@ if prompt := st.chat_input(input_placeholder):
                 elapsed = time.time() - start_time
                 status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # Safely extract final assistant response text
-            final_answer = ""
-            for msg in reversed(response["messages"]):
-                if msg.type == "ai" and isinstance(msg.content, str) and msg.content.strip():
-                    final_answer = msg.content
-                    break
-            
+            # --- IMPROVED ANSWER EXTRACTION ---
+            ai_texts = []
+            for msg in response["messages"]:
+                if msg.type == "ai" and hasattr(msg, 'content'):
+                    if isinstance(msg.content, str) and msg.content.strip():
+                        ai_texts.append(msg.content.strip())
+                    elif isinstance(msg.content, list):
+                        # Handle list content blocks from ChatNVIDIA
+                        for block in msg.content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                ai_texts.append(block.get("text", ""))
+
+            final_answer = "\n\n".join(ai_texts)
+
+            # Fallback if the agent executed tools but wrote minimal text
             if not final_answer:
-                final_answer = "Analysis complete. Please review the tool outputs above."
+                if 'latest_pdf_generated' in st.session_state:
+                    final_answer = "✅ USMCA compliance assessment completed and official PDF report generated successfully."
+                else:
+                    final_answer = "USMCA compliance analysis complete. Please review the detailed tool calculations above."
 
             # Render Final Response
             st.markdown(result_header)
             st.markdown(final_answer)
             
-            # Trigger immediate UI refresh if a PDF was just generated
+            # Append message to history FIRST
+            st.session_state.messages.append({"role": "assistant", "content": final_answer})
+            
+            # Trigger clean UI refresh to render the persistent download button
             if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
                 st.rerun()
 
-            st.session_state.messages.append({"role": "assistant", "content": final_answer})
-
         except Exception as e:
             st.error(f"Execution Error: {str(e)}")
+
