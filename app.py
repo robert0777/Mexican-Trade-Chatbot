@@ -286,6 +286,8 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+
+
 # User Chat Loop
 if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -313,8 +315,23 @@ if prompt := st.chat_input(input_placeholder):
                 elapsed = time.time() - start_time
                 status.update(label=f"Done in {elapsed:.2f}s / Completado en {elapsed:.2f}s", state="complete", expanded=False)
 
+            
+            final_answer = ""
+            for msg in reversed(response["messages"]):
+                # Look for the last AI message that contains non-empty text content
+                if msg.type == "ai" and isinstance(msg.content, str) and msg.content.strip():
+                    final_answer = msg.content
+                    break
+            
+            # Fallback if content was returned as a list of text blocks
+            if not final_answer:
+                last_msg = response["messages"][-1]
+                if hasattr(last_msg, 'content') and last_msg.content:
+                    final_answer = str(last_msg.content)
+                else:
+                    final_answer = "Análisis completado. Por favor consulte el detalle de las herramientas arriba."
+
             # Render Final Agent Response
-            final_answer = response["messages"][-1].content
             st.markdown(result_header)
             st.markdown(final_answer)
             
@@ -333,3 +350,5 @@ if prompt := st.chat_input(input_placeholder):
 
         except Exception as e:
             st.error(f"Execution Error / Error de Ejecución: {str(e)}")
+
+
