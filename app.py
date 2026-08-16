@@ -4,9 +4,9 @@ import time
 from pathlib import Path
 from dotenv import load_dotenv
 
-# LangChain, LangGraph & Model Imports
+# LangChain, LangGraph & Google Gemini Imports
 from langchain_core.tools import tool
-from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langgraph.prebuilt import create_react_agent
 from langchain_community.document_loaders import PyPDFDirectoryLoader
@@ -19,18 +19,18 @@ INDEX_PATH = "./faiss_index_trade"
 PDF_DIR = "./pdf_files_comercio_exterior"
 
 # ==============================================================================
-# 1. High-Speed Local FAISS Vector Database Engine
+# 1. FAISS Vector Database Engine (Google Embeddings)
 # ==============================================================================
 @st.cache_resource(show_spinner=False)
 def initialize_trade_vector_db(force_reindex: bool = False):
-    """Builds or loads a FAISS vector store from disk with truncation protection."""
-    api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
-    
-    # Set truncate="END" so inputs over 512 tokens are truncated automatically
-    embeddings = NVIDIAEmbeddings(
-        model="nvidia/nv-embedqa-e5-v5", 
-        api_key=api_key,
-        truncate="END"
+    """Builds or loads a FAISS vector store using Google's text-embedding-004 model."""
+    api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+    if not api_key:
+        return None
+
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004", 
+        google_api_key=api_key
     )
     
     # 1. Load existing local index if available
@@ -38,9 +38,9 @@ def initialize_trade_vector_db(force_reindex: bool = False):
         try:
             return FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
         except Exception:
-            pass # Rebuild index if loading fails
+            pass # Rebuild if loading fails
             
-    # 2. Build index if missing or requested
+    # 2. Build index from directory if missing
     pdf_dir = Path(PDF_DIR)
     if not pdf_dir.exists():
         pdf_dir.mkdir(parents=True, exist_ok=True)
@@ -51,8 +51,7 @@ def initialize_trade_vector_db(force_reindex: bool = False):
     if not docs:
         return None
 
-    # Reduced chunk_size to 400 characters to stay comfortably under 512 tokens
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
     split_docs = text_splitter.split_documents(docs)
 
     vectorstore = FAISS.from_documents(split_docs, embeddings)
@@ -140,21 +139,19 @@ def calculate_us_import_duties(
 tools = [search_trade_regulations, calculate_mexican_import_duties, calculate_us_import_duties]
 
 # ==============================================================================
-# 3. Agent Configuration
+# 3. Agent Configuration (Google Gemini 2.5 Flash)
 # ==============================================================================
 @st.cache_resource
 def get_trade_agent():
-    api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
+    api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
-        st.error("NVIDIA_API_KEY not configured.")
+        st.error("GOOGLE_API_KEY not configured. Please add it to your environment or Streamlit secrets.")
         st.stop()
         
-    llm = ChatNVIDIA(
-        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
         temperature=0.1,
-        max_tokens=2048,
-        timeout=180,
-        api_key=api_key
+        google_api_key=api_key
     )
     
     system_prompt = (
@@ -171,7 +168,7 @@ def get_trade_agent():
     return create_react_agent(llm, tools, prompt=system_prompt)
 
 # ==============================================================================
-# 4. Streamlit User Interface (Instant Load Setup)
+# 4. Streamlit User Interface
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Universal USMCA Customs Desk", page_icon="🛃")
 
@@ -184,7 +181,7 @@ with st.sidebar:
     st.markdown("---")
     
     if st.button("🔄 Re-Index Regulations"):
-        with st.spinner("Building local FAISS disk index with token protections..."):
+        with st.spinner("Building local FAISS disk index with Gemini Embeddings..."):
             v_db = initialize_trade_vector_db(force_reindex=True)
             if v_db:
                 st.success("FAISS index saved locally to disk!")
@@ -192,10 +189,7 @@ with st.sidebar:
                 st.warning("No PDFs found in ./pdf_files_comercio_exterior")
 
 st.title("📦 Universal USMCA / T-MEC Autonomous Trade Desk")
-st.caption("High-Speed AI Agent for Duty Calculation, Tariff Classification & Regulatory Compliance")
-
-# NOTE: Vector DB initialization is deferred until a query invokes search_trade_regulations
-# to ensure instant page loading upon user launch.
+st.caption("Powered by Google Gemini 2.5 Flash for High-Speed Duty Calculation & Compliance")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
