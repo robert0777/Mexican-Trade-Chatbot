@@ -1,27 +1,27 @@
-# 📦 Agentic AI Mexican Customs & Trade Assistant
+# 📦 Mexican Customs & Trade SME Chatbot
 
-An **Agentic AI System** developed to assist importers, exporters, and customs brokers navigating the **US-Mexico** trade corridor. 
+A **RAG-powered conversational assistant** developed to assist importers, exporters, and customs brokers navigating the **US-Mexico** trade corridor. 
 
-Unlike conventional chatbots, this system operates as an **autonomous consultor**: it plans multi-step tasks, queries official Mexican and US trade legislation (*LIGIE/HTS, T-MEC/USMCA, Ley Aduanera, CFF*) using a local RAG engine, performs deterministic landed-cost calculations (*CIF, IGIE, DTA, IVA*), and generates structured compliance reports.
+This system operates as a specialized **technical advisor**: it queries official Mexican and US trade legislation (*LIGIE/HTS, T-MEC/USMCA, Ley Aduanera, CFF*) using a semantic vector search engine (FAISS), retrieves precise legal foundations, and generates structured compliance reports and technical dictamens.
 
+FAISS stands for Facebook AI Similarity Search. It is an open-source library created by Meta designed to search through millions of vector embeddings rapidly.Similarity Search: When a user submits a query, FAISS converts the query into a vector and calculates the distance (e.g., Cosine Similarity or Euclidean Distance) between the query vector and all document vectors in your dataset.High Efficiency: Instead of scanning every document line-by-line, FAISS uses optimized indexing algorithms (like IndexFlatL2 or IVF) to locate the top $k$ most relevant text chunks in milliseconds, even across vast databases.
 ---
 
 ## 🌟 Key Features
 
-* **Autonomous ReAct Agent Loop**: Utilizes **LangGraph** and **NVIDIA NIMs** (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) to plan, execute, and observe multi-step trade analysis workflows.
-* **Legal Grounding (RAG)**: Ingests official trade laws, tariff schedules, and regulatory manuals (*Ley Aduanera, CFF, Anexo 22, USMCA/T-MEC*) from `./pdf_files_comercio_exterior` to cite exact legal foundations.
-* **Deterministic Tax & Duty Calculator**: A dedicated calculation framework that computes exact base values (*CIF/FOB*), import duties (*IGIE*), customs handling fees (*DTA*), and value-added tax (*IVA*) with clear currency formatting ($USD,$ MXN).
+* **Semantic Legal Grounding (RAG)**: Ingests official trade laws, tariff schedules, and regulatory manuals (*Ley Aduanera, CFF, Anexo 22, USMCA/T-MEC*) from `./pdf_files_comercio_exterior` and indexes them with **FAISS** and **NVIDIA Embeddings** (`NV-Embed-QA`) for accurate retrieval.
+* **LLM Expert Core**: Powered by **NVIDIA NIMs** (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) via `langchain-nvidia-ai-endpoints` to synthesize expert trade opinions and legal citations.
 * **Risk & Compliance Reporting**: Generates technical trade opinions finalized with a **RAID (Risks, Actions, Issues, Decisions)** matrix table and explicit legal disclaimers.
-* **Interactive UI**: Displays real-time reasoning loops, document source extracts, and query handling via a streamlined Streamlit interface.
+* **PDF Export Utility**: Compiles generated technical dictamens into downloadable PDF reports instantly using **ReportLab**.
+* **Interactive UI**: Streamlined **Streamlit** interface featuring document indexing, query handling, and regulatory excerpt inspection.
 
 ---
 
 ## 🛠️ Architecture & Tech Stack
 
 * **Framework & UI**: [Streamlit](https://streamlit.io/)
-* **Agentic Orchestration**: [LangGraph](https://www.langchain.com/langgraph) & [LangChain](https://www.langchain.com/)
-* **LLM Core**: NVIDIA NIMs (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) via `openai` / `langchain-nvidia-ai-endpoints`
-* **PDF Document Ingestion & RAG**: `PyPDFDirectoryLoader`, `RecursiveCharacterTextSplitter`, `tiktoken`
+* **LLM Core & Embeddings**: NVIDIA NIMs (`nvidia/llama-3.3-nemotron-super-49b-v1.5`, `NV-Embed-QA`) via `langchain-nvidia-ai-endpoints`
+* **Vector Search & RAG**: `FAISS`, `PyPDFDirectoryLoader`, `RecursiveCharacterTextSplitter`, `tiktoken`
 * **Report Generation**: [ReportLab](https://www.reportlab.com/)
 
 ---
@@ -29,9 +29,9 @@ Unlike conventional chatbots, this system operates as an **autonomous consultor*
 ## 📂 Project Structure
 
 ```text
-customs-agent-ai/
+mexican-customs-trade-sme-chatbot/
 │
-├── app.py                         # Main Streamlit application and Agent logic
+├── app.py                         # Main Streamlit application and RAG chatbot logic
 ├── requirements.txt               # Python dependencies
 ├── README.md                      # Project documentation
 ├── .env                           # Template for environment variables
