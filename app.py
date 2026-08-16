@@ -126,7 +126,7 @@ def generate_pdf_report(report_text: str) -> bytes:
 # --- SYSTEM PROMPT TEMPLATE ---
 
 TRADE_SME_PROMPT_TEMPLATE = """
-Eres un Asistente Especialista Senior (SME) en Comercio Exterior y Legislación Aduanera Mexicana, operando en los corredores comerciales EE.UU.-México (T-MEC / USMCA) y Unión Europea-México (TLCUEM).
+Eres un Asistente Especialista Senior (SME) en Comercio Exterior y Legislación Aduanera Mexicana, operando en los corredores comerciales EE.UU.-México (T-MEC / USMCA).
 
 Tu objetivo es guiar a importadores, exportadores y agentes aduanales respondiendo sus consultas operativas y normativas con base en el contexto legal proporcionado.
 
@@ -148,7 +148,7 @@ Reporte Técnico Formal:
 # --- UI SETUP ---
 st.set_page_config(layout="wide", page_title="Mexican Customs & Trade Assistant", page_icon="🛃")
 
-st.header("🛃 Asistente Especialista en Comercio Exterior y Operaciones Aduaneras (México / USMCA / UE)")
+st.header("🛃 Asistente Especialista en Comercio Exterior y Operaciones Aduaneras (México - USMCA)")
 st.markdown("""
 Plataforma para la consulta de legislación aduanera, verificación de Reglas de Origen T-MEC, análisis normativo 
 y generación de reportes de cumplimiento e impacto operativo.
