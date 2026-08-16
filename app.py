@@ -104,8 +104,8 @@ def calculate_mexican_import_duties(
 @tool
 def calculate_us_import_duties(
     invoice_value_usd: float,
-    freight_usd: float,
-    insurance_usd: float,
+    freight_usd: float = 0.0,
+    insurance_usd: float = 0.0,
     hts_code: str = "0804.40.00",
     has_usmca_certificate: bool = True
 ) -> dict:
@@ -186,19 +186,20 @@ tools = [
 def get_trade_agent():
     api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
     if not api_key:
-        st.error("NVIDIA_API_KEY not configured. Please add it to your environment variables or Streamlit secrets.")
+        st.error("NVIDIA_API_KEY not configured. Please add it to environment or st.secrets.")
         st.stop()
         
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.1,
+        max_tokens=4096,  # Prevents mid-stream tool JSON truncation
         api_key=api_key
     )
     
     system_prompt = (
         "You are an expert Autonomous Customs & Trade Agent specializing in USMCA/T-MEC regulations, "
         "Mexican Customs Law (Ley Aduanera), US Customs (CBP) entries, and agricultural export rules.\n\n"
-        "RULES OF ENGAGEMENT:\n"
+        "OPERATIONAL RULES:\n"
         "1. LANGUAGE: Match the user's input language (English or Spanish) in all responses.\n"
         "2. CROSS-BORDER DIRECTION:\n"
         "   - Exports from Mexico to the US (e.g., Texas): Use `calculate_us_import_duties` to evaluate US CBP entry rules.\n"
@@ -267,7 +268,7 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
             with st.status("Evaluating trade regulations and executing agent tools...", expanded=True) as status:
                 response = agent.invoke({"messages": [("user", prompt)]})
                 
-                # Render tool calls visually in the status container
+                # Render tool calls visually in status container
                 for message in response["messages"]:
                     if hasattr(message, 'tool_calls') and message.tool_calls:
                         for tool_call in message.tool_calls:
