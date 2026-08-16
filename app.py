@@ -6,233 +6,250 @@ from pathlib import Path
 from functools import lru_cache
 from dotenv import load_dotenv
 
+# PDF Generation Imports
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # LangChain, LangGraph & Model Imports
 from langchain_core.tools import tool
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings
+from langchain_community.vectorstores import FAISS
 from langgraph.prebuilt import create_react_agent
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import tiktoken
 
 # Load environment variables
 load_dotenv()
 
 # ==============================================================================
-# 1. RAG & Helper Utilities
+# 1. FAISS VectorStore & RAG Engine
 # ==============================================================================
-@lru_cache(maxsize=None)
-def get_tokenizer():
-    return tiktoken.encoding_for_model("gpt-3.5-turbo")
+@st.cache_resource(show_spinner=False)
+def initialize_vector_db():
+    """Builds or loads a FAISS vector database for semantic retrieval of trade docs."""
+    pdf_dir = Path("./pdf_files_comercio_exterior")
+    if not pdf_dir.exists():
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        return None
 
-def count_tokens(text: str) -> int:
-    return len(get_tokenizer().encode(text))
+    loader = PyPDFDirectoryLoader(path=str(pdf_dir), silent_errors=True)
+    docs = loader.load()
+    if not docs:
+        return None
 
-def normalize_text(text: str) -> str:
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-def load_documents():
-    """Loads and splits PDFs from the ./pdf_files_comercio_exterior directory."""
-    if "documents" not in st.session_state:
-        pdf_dir = Path("./pdf_files_comercio_exterior")
-        if not pdf_dir.exists():
-            pdf_dir.mkdir(parents=True, exist_ok=True)
-            
-        loader = PyPDFDirectoryLoader(path="./pdf_files_comercio_exterior", silent_errors=True)
-        docs = loader.load()
-        if docs:
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=350, 
-                chunk_overlap=50, 
-                length_function=count_tokens
-            )
-            for doc in docs:
-                doc.page_content = normalize_text(doc.page_content)
-            st.session_state.documents = text_splitter.split_documents(docs)
-        else:
-            st.session_state.documents = []
-
-def select_relevant_chunks(question: str, chunks: list, max_total_tokens: int = 2000) -> list:
-    """Selects top matching text chunks based on word overlap relevance."""
-    question_words = set(question.lower().split())
-    scored_chunks = []
-    for chunk in chunks:
-        chunk_words = set(chunk.page_content.lower().split())
-        overlap = len(question_words.intersection(chunk_words))
-        scored_chunks.append((chunk, overlap))
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=600,
+        chunk_overlap=100
+    )
+    split_docs = text_splitter.split_documents(docs)
     
-    scored_chunks.sort(key=lambda x: x[1], reverse=True)
-    selected = []
-    current_tokens = 0
-    for chunk, score in scored_chunks:
-        tokens = count_tokens(chunk.page_content)
-        if current_tokens + tokens <= max_total_tokens:
-            selected.append(chunk)
-            current_tokens += tokens
-    return selected
+    # Using NVIDIA Embedding Endpoint for high-accuracy semantic search
+    api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
+    embeddings = NVIDIAEmbeddings(model="nvidia/nv-embedqa-e5-v5", api_key=api_key)
+    
+    vectorstore = FAISS.from_documents(split_docs, embeddings)
+    return vectorstore
 
 # ==============================================================================
-# 2. Autonomous Agentic Tools
+# 2. Advanced Autonomous Agentic Tools
 # ==============================================================================
 @tool
 def search_usmca_trade_regulations(query: str) -> str:
     """
-    Searches loaded PDF documents for USMCA/T-MEC agreement rules, Mexican customs regulations, TIGIE tariffs, and NOM safety standards.
+    Searches loaded legal trade documents for USMCA/T-MEC rules of origin, Mexican customs law (Ley Aduanera), 
+    Anexo 22 fillable fields, TIGIE tariff classifications, and NOM safety compliance rules.
     """
-    if "documents" not in st.session_state or not st.session_state.documents:
-        return "No local PDF documents loaded in memory."
+    vectorstore = initialize_vector_db()
+    if not vectorstore:
+        return "No trade documents found in the database. Please verify PDF directory."
     
-    chunks = select_relevant_chunks(query, st.session_state.documents)
-    if not chunks:
-        return "No relevant text chunks found in local docs."
-        
-    context = "\n\n".join([f"[Doc: {Path(c.metadata['source']).name}]\n{c.page_content}" for c in chunks])
+    results = vectorstore.similarity_search(query, k=4)
+    context = "\n\n".join([f"[Source: {Path(doc.metadata.get('source', 'Doc')).name}]\n{doc.page_content}" for doc in results])
     return context
 
 @tool
-def calculate_usmca_import_duties(invoice_value: float, freight: float, insurance: float, ige_duty_rate: float, has_usmca_certificate: bool) -> dict:
+def calculate_mexican_customs_duties(
+    invoice_value_usd: float,
+    freight_usd: float,
+    insurance_usd: float,
+    exchange_rate_mxn: float,
+    ige_duty_rate: float,
+    has_usmca_certificate: bool,
+    apply_border_vat: bool = False
+) -> dict:
     """
-    Calculates CIF base value, ad-valorem duty (IGE), customs processing fee (DTA), Value Added Tax (IVA 16%), and total landed cost for USMCA imports into Mexico.
+    Calculates full pedimento duty structure into Mexican Pesos (MXN):
+    CIF Base Value, Ad-Valorem Duty (IGE), Customs Processing Fee (DTA), Prevalidation (PRV), 
+    Value Added Tax (IVA 16% or 8% border rate), and Total Payable Taxes.
     """
-    cif = invoice_value + freight + insurance
-    effective_ige = 0.0 if has_usmca_certificate else ige_duty_rate
-    ige_amount = cif * effective_ige
-    dta_amount = 410.0 if has_usmca_certificate else (cif * 0.008)
-    iva_amount = (cif + ige_amount + dta_amount) * 0.16
-    total_landed = cif + ige_amount + dta_amount + iva_amount
+    # Convert to MXN
+    cif_usd = invoice_value_usd + freight_usd + insurance_usd
+    cif_mxn = cif_usd * exchange_rate_mxn
+    
+    # 1. Impuesto General de Importación (IGE)
+    effective_ige_rate = 0.0 if has_usmca_certificate else ige_duty_rate
+    ige_amount = cif_mxn * effective_ige_rate
+    
+    # 2. Derecho de Trámite Aduanero (DTA) - Art. 49 LFF
+    # Preferential fixed rate under USMCA vs standard 8 per mille (0.008)
+    dta_amount = 410.0 if has_usmca_certificate else max(410.0, cif_mxn * 0.008)
+    
+    # 3. Prevalidación (PRV) - Fixed administrative fee (~$310 MXN base average)
+    prv_amount = 310.0
+    
+    # 4. Impuesto al Valor Agregado (IVA)
+    vat_rate = 0.08 if apply_border_vat else 0.16
+    taxable_base_iva = cif_mxn + ige_amount + dta_amount
+    iva_amount = taxable_base_iva * vat_rate
+    
+    total_duties_mxn = ige_amount + dta_amount + prv_amount + iva_amount
     
     return {
-        "cif_base_value": round(cif, 2),
-        "ige_duty_amount": round(ige_amount, 2),
-        "dta_customs_fee": round(dta_amount, 2),
-        "iva_vat_16_percent": round(iva_amount, 2),
-        "total_landed_cost": round(total_landed, 2)
+        "cif_value_usd": round(cif_usd, 2),
+        "cif_value_mxn": round(cif_mxn, 2),
+        "ige_duty_mxn": round(ige_amount, 2),
+        "dta_fee_mxn": round(dta_amount, 2),
+        "prv_fee_mxn": round(prv_amount, 2),
+        "iva_vat_mxn": round(iva_amount, 2),
+        "total_payable_taxes_mxn": round(total_duties_mxn, 2)
     }
 
-tools = [search_usmca_trade_regulations, calculate_usmca_import_duties]
+@tool
+def generate_usmca_pdf_report(title: str, executive_summary: str, cost_breakdown: str, document_checklist: str) -> str:
+    """
+    Generates an official downloadable USMCA trade compliance dictamen and checklist PDF.
+    Always trigger this tool when a user explicitly requests a report, PDF, or formal assessment.
+    """
+    pdf_filename = "USMCA_Customs_Compliance_Report.pdf"
+    pdf_path = Path(pdf_filename)
+    
+    doc = SimpleDocTemplate(str(pdf_path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        textColor=colors.HexColor('#0F172A'),
+        spaceAfter=12
+    )
+    heading_style = ParagraphStyle(
+        'HeadingStyle',
+        parent=styles['Heading2'],
+        fontSize=12,
+        textColor=colors.HexColor('#1E40AF'),
+        spaceBefore=10,
+        spaceAfter=6
+    )
+    body_style = styles['BodyText']
+    body_style.fontSize = 9
+    body_style.spaceAfter = 6
+
+    story = []
+    lang = st.session_state.get('lang', 'English')
+    
+    sub_title = "Dictamen de Cumplimiento de Comercio Exterior T-MEC" if lang == "Español" else "USMCA / T-MEC Trade Compliance Technical Assessment"
+    sec1 = "1. Resumen Ejecutivo y Base Legal" if lang == "Español" else "1. Executive Summary & Legal Basis"
+    sec2 = "2. Estimación de Contribuciones y Gravámenes (MXN)" if lang == "Español" else "2. Estimated Duty & Tax Assessment (MXN)"
+    sec3 = "3. Expediente Digital y VUCEM Checklist" if lang == "Español" else "3. Digital Audit & VUCEM Document Checklist"
+
+    story.append(Paragraph(f"<b>{title}</b>", title_style))
+    story.append(Paragraph(f"<b>{sub_title}</b>", styles['Normal']))
+    story.append(Spacer(1, 10))
+    
+    story.append(Paragraph(sec1, heading_style))
+    story.append(Paragraph(executive_summary.replace('\n', '<br/>'), body_style))
+    story.append(Spacer(1, 8))
+    
+    story.append(Paragraph(sec2, heading_style))
+    story.append(Paragraph(cost_breakdown.replace('\n', '<br/>'), body_style))
+    story.append(Spacer(1, 8))
+    
+    story.append(Paragraph(sec3, heading_style))
+    story.append(Paragraph(document_checklist.replace('\n', '<br/>'), body_style))
+    
+    doc.build(story)
+    
+    st.session_state['latest_pdf_generated'] = str(pdf_path)
+    return f"PDF report successfully generated: {pdf_filename}"
+
+tools = [search_usmca_trade_regulations, calculate_mexican_customs_duties, generate_usmca_pdf_report]
 
 # ==============================================================================
-# 3. Agent Executor Initialization
+# 3. Agent Core setup
 # ==============================================================================
 @st.cache_resource
 def get_agent_executor():
     api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
     if not api_key:
-        st.error("NVIDIA_API_KEY not configured.")
+        st.error("NVIDIA_API_KEY not found in environment or secrets.")
         st.stop()
         
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        temperature=0.1,        
-        api_key=api_key,
-        timeout=180,            
-        max_retries=3  
+        temperature=0.1,
+        api_key=api_key
     )
     
     system_prompt = (
-        "You are an expert Autonomous Trade Agent focusing strictly on USMCA / T-MEC trade.\n"
-        "1. LANGUAGE: Respond strictly in the language used by the user (English or Spanish).\n"
-        "2. LEGAL CONTEXT: Explicitly cite applicable legal frameworks (e.g., Ley Aduanera, TIGIE, USMCA Chapter 5 Rules of Origin, NOMs, USDA/APHIS, SENASICA).\n"
-        "3. CALCULATIONS: Always invoke `calculate_usmca_import_duties` when financial values are available. If freight/insurance are not given, assume reasonable defaults or $0 and note it.\n"
-        "4. INPUT FORMAT TEMPLATE: Provide a clear structured data input template when asking the user for missing calculation inputs.\n"
-        "5. RECOMMENDATIONS: End every response with clear, step-by-step recommendations on how to proceed with the export/import procedure."
+        "You are an expert Autonomous Customs & Trade Agent specializing in Mexican Customs Law (Ley Aduanera), "
+        "TIGIE, VUCEM operations, and USMCA/T-MEC preferential rules of origin.\n"
+        "RULES:\n"
+        "1. LANGUAGE MATCHING: Match the language of the user query exactly (English or Spanish).\n"
+        "2. ACCURACY: Always utilize `calculate_mexican_customs_duties` for tax estimates and `search_usmca_trade_regulations` for legal citations.\n"
+        "3. FORMAL PDF: Call `generate_usmca_pdf_report` whenever requested to issue formal assessments."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
 
 # ==============================================================================
-# 4. Streamlit User Interface
+# 4. Streamlit UI Interface
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="USMCA Trade Agent", page_icon="📦")
+st.set_page_config(layout="wide", page_title="USMCA Customs Agent", page_icon="🛃")
 
-# Sidebar
 with st.sidebar:
-    st.markdown("### 🌐 Language / Idioma")
-    selected_lang = st.radio("Interface Language / Idioma", ["English", "Español"], index=0, key="lang_radio")
+    st.title("🛃 Operational Panel")
+    selected_lang = st.radio("Language / Idioma", ["English", "Español"], index=0, key="lang_radio")
     st.session_state.lang = selected_lang
     
     st.markdown("---")
-    st.markdown("### ⚙️ " + ("Settings" if st.session_state.lang == "English" else "Configuración"))
-    st.markdown("**Author / Autor:** Dr. Robert Hernández Martínez")
+    st.markdown("**Developer:** Dr. Robert Hernández Martínez")
+    st.markdown("**Affiliation:** UNAM / Trade AI Systems")
     st.markdown("---")
     
-    btn_label = "🔄 Load / Refresh Local PDFs" if st.session_state.lang == "English" else "🔄 Cargar / Actualizar PDFs Locales"
-    if st.button(btn_label):
-        with st.spinner("Processing ./pdf_files_comercio_exterior..."):
-            load_documents()
-            num_chunks = len(st.session_state.get('documents', []))
-            if num_chunks > 0:
-                msg = f"Loaded {num_chunks} document chunks." if st.session_state.lang == "English" else f"Cargados {num_chunks} fragmentos."
-                st.success(msg)
+    if st.button("🔄 Index Custom Regulations"):
+        with st.spinner("Indexing vector database from ./pdf_files_comercio_exterior..."):
+            v_db = initialize_vector_db()
+            if v_db:
+                st.success("Vector DB successfully initialized!")
             else:
-                msg = "No PDFs found in ./pdf_files_comercio_exterior" if st.session_state.lang == "English" else "No se encontraron PDFs."
-                st.warning(msg)
+                st.warning("No PDFs found to index.")
 
-    st.markdown("---")
-    st.markdown("""
-        <div style="font-size: 0.8rem; color: #6B7280; text-align: center;">
-            © 2026 USMCA Agent AI
-        </div>
-    """, unsafe_allow_html=True)
+# Main Layout
+st.title("📦 USMCA / T-MEC Autonomous Customs Desk")
+st.caption("AI-Powered Compliance, Tariff Calculation, and Audit Automation for Mexican Customs Brokers and Importers")
 
-# Localization Setup
-if st.session_state.lang == "English":
-    title_text = "📦 USMCA / T-MEC Autonomous Trade Agent"
-    desc_text = """
-    > **Specialized USMCA (US-Mexico-Canada) Compliance & Calculations Assistant**  
-    > 1. **Legal Framework**: Contextualized rules (*Ley Aduanera, TIGIE, USMCA Chapter 5, NOMs, USDA/APHIS*).  
-    > 2. **Duty Calculations**: Automatic landed-cost estimation (*CIF, IGE, DTA, VAT*).  
-    > 3. **Actionable Recommendations**: Step-by-step guidance for trade operations.
-    """
-    input_placeholder = "Describe your USMCA shipment..."
-    status_label = "🧠 Agent is analyzing query and invoking USMCA tools..."
-    tool_exec_label = "🛠️ **Executing Tool:**"
-    tool_obs_label = "👁️ **Tool Observation:**"
-    result_header = "### 📝 Compliance Assessment & Action Plan:"
-    template_header = "💡 **Sample Input Template for Tax Calculations**"
-    template_code = """Invoice Value: $50,000 USD
-Freight: $2,500 USD
-Insurance: $500 USD
-Tariff Rate (IGE): 0%
-Has USMCA Certificate of Origin: Yes"""
-else:
-    title_text = "📦 Agente Autónomo de Comercio Exterior T-MEC"
-    desc_text = """
-    > **Asistente Especializado en Cumplimiento y Cálculos T-MEC (México-EUA-Canadá)**  
-    > 1. **Marco Legal**: Contexto regulatorio (*Ley Aduanera, TIGIE, Capítulo 5 T-MEC, NOMs, SENASICA*).  
-    > 2. **Cálculo de Impuestos**: Estimación de costos CIF, IGE, DTA e IVA.  
-    > 3. **Recomendaciones**: Pasos concretos para proceder con su trámite aduanal.
-    """
-    input_placeholder = "Describa su embarque T-MEC..."
-    status_label = "🧠 El Agente está evaluando la consulta y ejecutando herramientas..."
-    tool_exec_label = "🛠️ **Ejecutando Herramienta:**"
-    tool_obs_label = "👁️ **Observación de Herramienta:**"
-    result_header = "### 📝 Dictamen y Plan de Acción:"
-    template_header = "💡 **Plantilla de Ejemplo para Cálculo de Impuestos**"
-    template_code = """Valor Factura: $50,000 USD
-Flete: $2,500 USD
-Seguro: $500 USD
-Tasa Arancelaria (IGE): 0%
-Cuenta con Certificado de Origen T-MEC: Sí"""
-
-st.title(title_text)
-st.markdown(desc_text)
-
-# Interactive Expander: Sample Format Template
-with st.expander(template_header):
-    st.code(template_code, language="yaml")
-
-# Initialize Session Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display Message History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User Input Loop
-if prompt := st.chat_input(input_placeholder):
+if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
+    pdf_path = st.session_state['latest_pdf_generated']
+    with open(pdf_path, "rb") as file:
+        st.download_button(
+            label="📄 Download Technical Dictamen (PDF)",
+            data=file,
+            file_name="USMCA_Compliance_Report.pdf",
+            mime="application/pdf",
+            key="pdf_download_top"
+        )
+
+if prompt := st.chat_input("Enter shipment details, ask about rules of origin, or request a pedimento calculation..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -240,52 +257,15 @@ if prompt := st.chat_input(input_placeholder):
     with st.chat_message("assistant"):
         try:
             agent_executor = get_agent_executor()
-            
-            with st.status(status_label, expanded=True) as status:
-                start_time = time.time()
+            with st.status("Evaluating trade regulation compliance...", expanded=True) as status:
                 response = agent_executor.invoke({"messages": [("user", prompt)]})
-                
-                for message in response["messages"]:
-                    if hasattr(message, 'tool_calls') and message.tool_calls:
-                        for tool_call in message.tool_calls:
-                            st.write(f"{tool_exec_label} `{tool_call['name']}`")
-                            st.json(tool_call['args'])
-                    elif message.type == "tool":
-                        st.write(tool_obs_label)
-                        safe_content = str(message.content).replace("<", "&lt;").replace(">", "&gt;")
-                        st.caption(safe_content[:300] + "...")
-                        
-                elapsed = time.time() - start_time
-                status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
+                status.update(label="Complete", state="complete", expanded=False)
 
-            # Robust Response Extraction: Collect text across all AI turns
-            ai_texts = []
-            for msg in response["messages"]:
-                if msg.type == "ai":
-                    if isinstance(msg.content, str) and msg.content.strip():
-                        clean_text = msg.content.strip().replace("<TOOL_CALLS>", "").replace("</TOOL_CALLS>", "")
-                        if clean_text:
-                            ai_texts.append(clean_text)
-                    elif isinstance(msg.content, list):
-                        for block in msg.content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                txt = block.get("text", "").replace("<TOOL_CALLS>", "").replace("</TOOL_CALLS>", "")
-                                if txt:
-                                    ai_texts.append(txt)
-
-            # Join non-empty AI text blocks
+            ai_texts = [msg.content for msg in response["messages"] if msg.type == "ai" and msg.content]
             final_answer = "\n\n".join(ai_texts) if ai_texts else "Analysis complete."
 
-            st.markdown(result_header)
             st.markdown(final_answer)
-
-            # Interactive Quick Copy Box
-            st.markdown("---")
-            st.caption("📋 **Quick Copy Response Content**")
-            st.code(final_answer, language="markdown")
-
-            # Append message to history
             st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
         except Exception as e:
-            st.error(f"Execution Error: {str(e)}")
+            st.error(f"Error executing agent workflow: {str(e)}")
