@@ -30,8 +30,11 @@ def get_nvidia_llm():
 
 @st.cache_resource
 def get_nvidia_embeddings():
-    """Cache the NVIDIA Embeddings instance."""
-    return NVIDIAEmbeddings(model="NV-Embed-QA")
+    """Cache the NVIDIA Embeddings instance using a valid text embedding model."""
+    return NVIDIAEmbeddings(
+        model="nvidia/nv-embedqa-e5-v5",
+        model_type="query"
+    )
 
 @st.cache_resource
 def get_vectorstore():
@@ -121,7 +124,7 @@ Instrucciones de Respuesta:
 1. **Análisis Normativo Riguroso**: Utiliza la legislación oficial presentada en el contexto (Ley Aduanera, LIGIE, RGCE, CFF, Tratados Comerciales).
 2. **Formato Financiero e Impuestos**: Si la consulta menciona montos o tasas de contribuciones, presenta los datos organizados formalmente con la notación y moneda correspondiente (ej. Valor en USD $, Contribuciones en MXN $, Tasas % e IGIE/DTA/IVA).
 3. **Referencias Legales**: Cita explícitamente los Artículos, Leyes, Anexos o Reglas que respaldan tu respuesta.
-4. **Opinión Experta & Disclaimers**: Proporciona tu opinión técnica e incluye las advertencias/deslindes de responsabilidad normativa aplicables.
+4. **Opinión Experta & Disclaimers**: Proporciona tu opinión técnica e includes las advertencias/deslindes de responsabilidad normativa aplicables.
 5. **Matriz RAID OBLIGATORIA**: Finaliza SIEMPRE tu dictamen con una tabla Markdown de Matriz RAID (Riesgos, Acciones, Incidentes/Issues, Decisiones).
 
 Contexto Legal Disponible:
