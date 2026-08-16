@@ -4,7 +4,6 @@ import re
 import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-import tiktoken
 import io
 
 # ReportLab Imports for PDF Generation
@@ -17,10 +16,53 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings, ChatNVIDIA
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
 # Load environment variables
 load_dotenv()
+
+FAISS_INDEX_PATH = "./faiss_index_comercio"
+
+# --- CACHED INITIALIZATIONS (NVIDIA & FAISS) ---
+
+@st.cache_resource
+def get_nvidia_llm():
+    """Cache the NVIDIA Chat model instance across user sessions."""
+    return ChatNVIDIA(
+        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        temperature=0.3,
+        max_tokens=4000
+    )
+
+@st.cache_resource
+def get_nvidia_embeddings():
+    """Cache the NVIDIA Embeddings instance."""
+    return NVIDIAEmbeddings(model="NV-Embed-QA")
+
+def load_or_create_vectorstore():
+    """Loads existing FAISS index from disk, or creates and saves a new one."""
+    embeddings = get_nvidia_embeddings()
+    if Path(FAISS_INDEX_PATH).exists():
+        return FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
+    
+    pdf_dir = Path("./pdf_files_comercio_exterior")
+    if not pdf_dir.exists() or not list(pdf_dir.glob("*.pdf")):
+        raise FileNotFoundError("No se encontraron regulaciones en PDF en './pdf_files_comercio_exterior'")
+    
+    loader = PyPDFDirectoryLoader(path="./pdf_files_comercio_exterior", silent_errors=True, recursive=False)
+    raw_docs = loader.load()
+    
+    # Switched length_function from tiktoken to default len (character length) for 100x faster execution
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1200,
+        chunk_overlap=150,
+        separators=["\n\n", "\n", "Artículo", "ARTÍCULO", ".", ";", " ", ""]
+    )
+    split_docs = text_splitter.split_documents(raw_docs)
+    
+    vectorstore = FAISS.from_documents(split_docs, embeddings)
+    vectorstore.save_local(FAISS_INDEX_PATH)
+    return vectorstore
 
 # --- GREETING HANDLER ---
 class TradeGreetingHandler:
@@ -70,36 +112,7 @@ class TradeGreetingHandler:
             
         return is_greeting, greeting_response, actual_question
 
-
-# --- DOCUMENT PROCESSING & VECTORSTORE ---
-
-def count_tokens(text):
-    tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
-    return len(tokenizer.encode(text))
-
-def load_and_index_documents():
-    pdf_dir = Path("./pdf_files_comercio_exterior")
-    pdf_files = sorted(pdf_dir.glob("*.pdf"))
-    if not pdf_files:
-        raise FileNotFoundError("No se encontraron regulaciones en PDF en el directorio './pdf_files_comercio_exterior'")
-    
-    loader = PyPDFDirectoryLoader(path="./pdf_files_comercio_exterior", silent_errors=True, recursive=False)
-    raw_docs = loader.load()
-    
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=120,
-        length_function=count_tokens,
-        separators=["\n\n", "\n", "Artículo", "ARTÍCULO", ".", ";", " ", ""]
-    )
-    split_docs = text_splitter.split_documents(raw_docs)
-    
-    embeddings = NVIDIAEmbeddings(model="NV-Embed-QA")
-    st.session_state.vectorstore = FAISS.from_documents(split_docs, embeddings)
-
-
 # --- PDF REPORT GENERATOR ---
-
 def generate_pdf_report(report_text: str) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -122,9 +135,7 @@ def generate_pdf_report(report_text: str) -> bytes:
     buffer.seek(0)
     return buffer.getvalue()
 
-
 # --- SYSTEM PROMPT TEMPLATE ---
-
 TRADE_SME_PROMPT_TEMPLATE = """
 Eres un Asistente Especialista Senior (SME) en Comercio Exterior y Legislación Aduanera Mexicana, operando en los corredores comerciales EE.UU.-México (T-MEC / USMCA).
 
@@ -172,13 +183,17 @@ with st.sidebar:
 if 'greeting_handler' not in st.session_state:
     st.session_state.greeting_handler = TradeGreetingHandler()
 
+# Automatically attempt to load vectorstore on boot if index exists, or on button trigger
+if "vectorstore" not in st.session_state and Path(FAISS_INDEX_PATH).exists():
+    st.session_state.vectorstore = load_or_create_vectorstore()
+
 if st.button("Cargar e Indizar Regulaciones PDF (FAISS VectorStore)"):
-    with st.spinner("Indizando documentos normativos mediante NVIDIA Embeddings..."):
+    with st.spinner("Indizando/Cargando documentos normativos..."):
         try:
             start_time = datetime.datetime.now()
-            load_and_index_documents()
+            st.session_state.vectorstore = load_or_create_vectorstore()
             duration = (datetime.datetime.now() - start_time).total_seconds()
-            st.success(f" Base documental cargada e indizada exitosamente en {duration:.2f} segundos.")
+            st.success(f"Base documental cargada exitosamente en {duration:.2f} segundos.")
         except Exception as e:
             st.error(f"Error al procesar la carpeta de regulaciones: {str(e)}")
 
@@ -195,52 +210,45 @@ if user_query:
             st.warning("⚠️ Primero cargue los documentos ejecutando el botón 'Cargar e Indizar Regulaciones PDF'")
         else:
             try:
-                with st.spinner("Consultando legislación y redactando respuesta técnica..."):
-                    
-                    # 1. Similarity Search over FAISS Store
+                # Use st.status to show real-time progress steps to the user
+                with st.status("Procesando dictamen técnico...", expanded=True) as status:
+                    st.write("🔍 Consultando índice vectorial FAISS...")
                     relevant_docs = st.session_state.vectorstore.similarity_search(actual_q, k=4)
                     
-                    docs_context = []
-                    for i, doc in enumerate(relevant_docs, 1):
-                        source_name = Path(doc.metadata.get('source', 'Desconocido')).name
-                        docs_context.append(f"--- Documento Legal #{i} [{source_name}] ---\n{doc.page_content}")
-                    
+                    docs_context = [
+                        f"--- Documento Legal #{i} [{Path(doc.metadata.get('source', 'Desconocido')).name}] ---\n{doc.page_content}"
+                        for i, doc in enumerate(relevant_docs, 1)
+                    ]
                     formatted_context = "\n\n".join(docs_context)
                     
-                    # 2. Call NVIDIA Chat Model
-                    llm = ChatNVIDIA(
-                        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
-                        temperature=0.3,
-                        max_tokens=4000
-                    )
+                    st.write("🤖 Generando respuesta con NVIDIA Nemotron...")
+                    llm = get_nvidia_llm()
+                    prompt = TRADE_SME_PROMPT_TEMPLATE.format(context=formatted_context, question=actual_q)
                     
-                    prompt = TRADE_SME_PROMPT_TEMPLATE.format(
-                        context=formatted_context,
-                        question=actual_q
-                    )
+                    # Streaming response for low apparent latency
+                    response_container = st.empty()
+                    chunks = []
+                    for chunk in llm.stream([HumanMessage(content=prompt)]):
+                        chunks.append(chunk.content)
+                        response_container.markdown("".join(chunks))
                     
-                    response = llm.invoke([HumanMessage(content=prompt)])
-                    final_output = response.content
-                    
-                    # 3. Render Output
-                    st.markdown("### 📜 Dictamen de Cumplimiento y Análisis Técnico")
-                    st.markdown(final_output)
-                    
-                    # 4. Source Footnotes
-                    with st.expander("📂 Ver extractos normativos consultados"):
-                        for doc in relevant_docs:
-                            source_name = Path(doc.metadata.get('source', 'Desconocido')).name
-                            st.write(f"**{source_name}**")
-                            st.caption(doc.page_content)
-                    
-                    # 5. Download PDF
-                    pdf_bytes = generate_pdf_report(final_output)
-                    st.download_button(
-                        label="📄 Descargar Dictamen Técnico en PDF",
-                        data=pdf_bytes,
-                        file_name="Dictamen_Comercio_Exterior_SME.pdf",
-                        mime="application/pdf"
-                    )
+                    final_output = "".join(chunks)
+                    status.update(label="Dictamen completado", state="complete", expanded=False)
+                
+                # Footnotes & Download
+                with st.expander("📂 Ver extractos normativos consultados"):
+                    for doc in relevant_docs:
+                        source_name = Path(doc.metadata.get('source', 'Desconocido')).name
+                        st.write(f"**{source_name}**")
+                        st.caption(doc.page_content)
+                        
+                pdf_bytes = generate_pdf_report(final_output)
+                st.download_button(
+                    label="📄 Descargar Dictamen Técnico en PDF",
+                    data=pdf_bytes,
+                    file_name="Dictamen_Comercio_Exterior_SME.pdf",
+                    mime="application/pdf"
+                )
                     
             except Exception as e:
                 st.error(f"Error durante la consulta del modelo: {str(e)}")
