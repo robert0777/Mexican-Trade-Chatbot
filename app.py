@@ -133,9 +133,9 @@ def get_agent_executor():
         "You are an expert Autonomous Trade Agent focusing strictly on USMCA / T-MEC trade.\n"
         "1. LANGUAGE: Respond strictly in the language used by the user (English or Spanish).\n"
         "2. LEGAL CONTEXT: Explicitly cite applicable legal frameworks (e.g., Ley Aduanera, TIGIE, USMCA Chapter 5 Rules of Origin, NOMs, USDA/APHIS, SENASICA).\n"
-        "3. INPUT FORMAT TEMPLATE: If the user provides an incomplete query or asks how to structure data for tax calculations, provide a clear copyable data format template.\n"
-        "4. CALCULATIONS: Always invoke `calculate_usmca_import_duties` when financial values are available.\n"
-        "5. RECOMMENDATIONS: End every response with concrete, step-by-step recommendations on how to proceed with the clearance or export process."
+        "3. CALCULATIONS: Always invoke `calculate_usmca_import_duties` when financial values are available. If freight/insurance are not given, assume reasonable defaults or $0 and note it.\n"
+        "4. INPUT FORMAT TEMPLATE: Provide a clear structured data input template when asking the user for missing calculation inputs.\n"
+        "5. RECOMMENDATIONS: End every response with clear, step-by-step recommendations on how to proceed with the export/import procedure."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
@@ -180,7 +180,7 @@ if st.session_state.lang == "English":
     title_text = "📦 USMCA / T-MEC Autonomous Trade Agent"
     desc_text = """
     > **Specialized USMCA (US-Mexico-Canada) Compliance & Calculations Assistant**  
-    > 1. **Legal Framework**: Contextualized rules (*Ley Aduanera, TIGIE, USMCA Chapter 5, NOMs*).  
+    > 1. **Legal Framework**: Contextualized rules (*Ley Aduanera, TIGIE, USMCA Chapter 5, NOMs, USDA/APHIS*).  
     > 2. **Duty Calculations**: Automatic landed-cost estimation (*CIF, IGE, DTA, VAT*).  
     > 3. **Actionable Recommendations**: Step-by-step guidance for trade operations.
     """
@@ -193,13 +193,13 @@ if st.session_state.lang == "English":
     template_code = """Invoice Value: $50,000 USD
 Freight: $2,500 USD
 Insurance: $500 USD
-Tariff Rate (IGE): 10%
+Tariff Rate (IGE): 0%
 Has USMCA Certificate of Origin: Yes"""
 else:
     title_text = "📦 Agente Autónomo de Comercio Exterior T-MEC"
     desc_text = """
     > **Asistente Especializado en Cumplimiento y Cálculos T-MEC (México-EUA-Canadá)**  
-    > 1. **Marco Legal**: Contexto regulatorio (*Ley Aduanera, TIGIE, Capítulo 5 T-MEC, NOMs*).  
+    > 1. **Marco Legal**: Contexto regulatorio (*Ley Aduanera, TIGIE, Capítulo 5 T-MEC, NOMs, SENASICA*).  
     > 2. **Cálculo de Impuestos**: Estimación de costos CIF, IGE, DTA e IVA.  
     > 3. **Recomendaciones**: Pasos concretos para proceder con su trámite aduanal.
     """
@@ -212,7 +212,7 @@ else:
     template_code = """Valor Factura: $50,000 USD
 Flete: $2,500 USD
 Seguro: $500 USD
-Tasa Arancelaria (IGE): 10%
+Tasa Arancelaria (IGE): 0%
 Cuenta con Certificado de Origen T-MEC: Sí"""
 
 st.title(title_text)
@@ -258,10 +258,10 @@ if prompt := st.chat_input(input_placeholder):
                 elapsed = time.time() - start_time
                 status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # Response Extraction
+            # Robust Response Extraction: Collect text across all AI turns
             ai_texts = []
             for msg in response["messages"]:
-                if msg.type == "ai" and hasattr(msg, 'content'):
+                if msg.type == "ai":
                     if isinstance(msg.content, str) and msg.content.strip():
                         clean_text = msg.content.strip().replace("<TOOL_CALLS>", "").replace("</TOOL_CALLS>", "")
                         if clean_text:
@@ -273,7 +273,8 @@ if prompt := st.chat_input(input_placeholder):
                                 if txt:
                                     ai_texts.append(txt)
 
-            final_answer = "\n\n".join(ai_texts) if ai_texts else "USMCA compliance analysis complete."
+            # Join non-empty AI text blocks
+            final_answer = "\n\n".join(ai_texts) if ai_texts else "Analysis complete."
 
             st.markdown(result_header)
             st.markdown(final_answer)
@@ -281,7 +282,7 @@ if prompt := st.chat_input(input_placeholder):
             # Interactive Quick Copy Box
             st.markdown("---")
             st.caption("📋 **Quick Copy Response Content**")
-            st.code(final_answer, language="text")
+            st.code(final_answer, language="markdown")
 
             # Append message to history
             st.session_state.messages.append({"role": "assistant", "content": final_answer})
