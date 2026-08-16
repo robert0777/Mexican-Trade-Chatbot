@@ -1,78 +1,38 @@
 import streamlit as st
 import os
-import re
+import time
 import datetime
+import re
 from pathlib import Path
+from functools import lru_cache
 from dotenv import load_dotenv
+import tiktoken
 
-# LangChain Imports
+from openai import OpenAI
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings, ChatNVIDIA
-from langchain_core.messages import HumanMessage
 
 # Load environment variables
 load_dotenv()
 
-FAISS_INDEX_PATH = "./faiss_index_comercio"
+# Target Directory for Trade PDFs
+DATA_DIR = "./pdf_files_comercio_exterior"
 
-# --- CACHED INITIALIZATIONS (NVIDIA & FAISS) ---
-
-@st.cache_resource
-def get_nvidia_llm():
-    """Cache the NVIDIA Chat model instance across user sessions."""
-    return ChatNVIDIA(
-        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        temperature=0.3,
-        max_tokens=2500
-    )
-
-@st.cache_resource
-def get_nvidia_embeddings():
-    """Cache the NVIDIA Embeddings instance using a valid text embedding model."""
-    return NVIDIAEmbeddings(
-        model="nvidia/nv-embedqa-e5-v5",
-        model_type="query"
-    )
-
-@st.cache_resource
-def get_vectorstore():
-    """Loads FAISS index into memory once and caches it across re-runs."""
-    embeddings = get_nvidia_embeddings()
-    if Path(FAISS_INDEX_PATH).exists():
-        return FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-    return None
-
-def build_and_save_vectorstore():
-    """Only called explicitly when re-indexing files."""
-    pdf_dir = Path("./pdf_files_comercio_exterior")
-    if not pdf_dir.exists() or not list(pdf_dir.glob("*.pdf")):
-        raise FileNotFoundError("No se encontraron regulaciones en PDF en './pdf_files_comercio_exterior'")
-    
-    loader = PyPDFDirectoryLoader(path="./pdf_files_comercio_exterior", silent_errors=True, recursive=False)
-    raw_docs = loader.load()
-    
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        separators=["\n\n", "\n", "Artículo", "ARTÍCULO", ".", ";", " ", ""]
-    )
-    split_docs = text_splitter.split_documents(raw_docs)
-    
-    embeddings = get_nvidia_embeddings()
-    vectorstore = FAISS.from_documents(split_docs, embeddings)
-    vectorstore.save_local(FAISS_INDEX_PATH)
-    get_vectorstore.clear()  # Clear cache to force reload on next call
-    return vectorstore
-
-# --- GREETING HANDLER ---
-class TradeGreetingHandler:
+class GreetingHandler:
     def __init__(self):
         self.greetings = {
             'hola', 'buenos días', 'buenas tardes', 'buenas noches', 'saludos',
-            'qué tal', 'cómo estás', 'mucho gusto', 'hey', 'hi', 'hello', 'buen día'
+            'qué tal', 'cómo estás', 'como estas', 'qué onda', 'que onda',
+            'cómo le va', 'cómo está usted', 'mucho gusto', 'bonito día', 'buen día',
+            'hey', 'hi', 'hello', 'cómo te llamas', 'me llamo', 'mi nombre es'
         }
+        
+        self.time_based_responses = {
+            'morning': "¡Buenos días! ¿En qué puedo ayudarte respecto a comercio exterior, legislación aduanera y T-MEC?",
+            'afternoon': "¡Buenas tardes! ¿En qué puedo ayudarte respecto a comercio exterior, legislación aduanera y T-MEC?",
+            'evening': "¡Buenas noches! ¿En qué puedo ayudarte respecto a comercio exterior, legislación aduanera y T-MEC?"
+        }
+        
         self.greeting_pattern = re.compile(
             '|'.join(r'\b{}\b'.format(re.escape(g)) for g in self.greetings),
             re.IGNORECASE
@@ -96,7 +56,6 @@ class TradeGreetingHandler:
     def process_input(self, user_input: str) -> tuple[bool, str | None, str | None]:
         if not user_input:
             return False, None, None
-            
         normalized_input = self.normalize_text(user_input)
         is_greeting = bool(self.greeting_pattern.search(normalized_input))
         actual_question = self.extract_question(user_input)
@@ -104,119 +63,227 @@ class TradeGreetingHandler:
         current_hour = datetime.datetime.now().hour
         if is_greeting:
             if current_hour < 12:
-                greeting_response = "¡Buenos días! ¿En qué puedo asesorarle hoy en materia de comercio exterior, clasificación arancelaria o cumplimiento T-MEC?"
+                greeting_response = self.time_based_responses['morning']
             elif current_hour < 18:
-                greeting_response = "¡Buenas tardes! ¿En qué puedo asesorarle hoy en materia de comercio exterior, clasificación arancelaria o cumplimiento T-MEC?"
+                greeting_response = self.time_based_responses['afternoon']
             else:
-                greeting_response = "¡Buenas noches! ¿En qué puedo asesorarle hoy en materia de comercio exterior, clasificación arancelaria o cumplimiento T-MEC?"
+                greeting_response = self.time_based_responses['evening']
         else:
             greeting_response = None
             
         return is_greeting, greeting_response, actual_question
 
-# --- SYSTEM PROMPT TEMPLATE ---
-TRADE_SME_PROMPT_TEMPLATE = """
-Eres un Asistente Especialista Senior (SME) en Comercio Exterior y Legislación Aduanera Mexicana, operando en los corredores comerciales EE.UU.-México (T-MEC / USMCA).
+@lru_cache(maxsize=None)
+def get_tokenizer():
+    return tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-Tu objetivo es guiar a importadores, exportadores y agentes aduanales respondiendo sus consultas operativas y normativas con base en el contexto legal proporcionado.
+def count_tokens(text):
+    tokenizer = get_tokenizer()
+    return len(tokenizer.encode(text))
+
+def get_pdf_files(directory=DATA_DIR):
+    pdf_dir = Path(directory)
+    pdf_files = sorted(pdf_dir.glob("*.pdf"))
+    if not pdf_files:
+        raise FileNotFoundError(f"No se encontraron archivos PDF en el directorio: {directory}")
+    return pdf_files
+
+def normalize_trade_text(text):
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def load_documents():
+    if "documents" not in st.session_state:
+        pdf_files = get_pdf_files()
+        
+        chunk_size = min(800, max(300, int(500 * (50 / len(pdf_files)))))
+        chunk_overlap = max(50, chunk_size // 10)
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=count_tokens,
+            separators=["\n\n", "\n", ".", "!", "?", ";", ":", " ", ""]
+        )
+        
+        loader = PyPDFDirectoryLoader(
+            path=DATA_DIR, 
+            silent_errors=True,
+            recursive=False
+        )
+        docs = loader.load()
+        
+        processed_docs = []
+        for doc in docs:
+            normalized_text = normalize_trade_text(doc.page_content)
+            doc.page_content = normalized_text
+            processed_docs.append(doc)
+        
+        st.session_state.documents = text_splitter.split_documents(processed_docs)
+
+def calculate_chunk_relevance(chunk, question):
+    question_words = set(question.lower().split())
+    chunk_words = set(chunk.page_content.lower().split())
+    word_overlap = len(question_words.intersection(chunk_words))
+    length_factor = 1 / (len(chunk.page_content.split()) + 1)
+    return word_overlap * (1 - length_factor)
+
+def select_relevant_chunks(question, chunks, max_total_tokens=6000):
+    prompt_tokens = count_tokens(question) + 500
+    available_tokens = max_total_tokens - prompt_tokens
+    
+    scored_chunks = [(chunk, calculate_chunk_relevance(chunk, question)) for chunk in chunks]
+    scored_chunks.sort(key=lambda x: x[1], reverse=True)
+    
+    selected_chunks = []
+    used_documents = set()
+    current_tokens = 0
+    
+    for chunk, score in scored_chunks:
+        doc_name = Path(chunk.metadata['source']).name
+        chunk_tokens = count_tokens(chunk.page_content)
+        
+        if doc_name not in used_documents and current_tokens + chunk_tokens <= available_tokens:
+            selected_chunks.append(chunk)
+            used_documents.add(doc_name)
+            current_tokens += chunk_tokens
+            
+        if current_tokens >= available_tokens * 0.9:
+            break
+            
+    return selected_chunks
+
+def truncate_context(context, max_tokens=6000):
+    tokens = count_tokens(context)
+    if tokens > max_tokens:
+        lines = context.split('\n')
+        truncated_context = []
+        current_tokens = 0
+        for line in lines:
+            line_tokens = count_tokens(line)
+            if current_tokens + line_tokens <= max_tokens:
+                truncated_context.append(line)
+                current_tokens += line_tokens
+            else:
+                break
+        return '\n'.join(truncated_context)
+    return context
+
+# UI Setup
+st.set_page_config(layout="wide", page_title="Asesor AI de Comercio Exterior y Aduanas", page_icon="🌐")
+st.header("Asistente AI Especializado en Legislación Aduanera y T-MEC")
+st.markdown("Sistema de consulta para importadores, exportadores y agentes aduanales sobre la normativa del corredor US-MX.")
+
+# Sidebar Configuration
+with st.sidebar:
+    st.markdown("### 📖 Sobre la Aplicación")
+    st.write("Analizador automatizado de normativa aduanera mexicana, Reglas Generales de Comercio Exterior y T-MEC.")
+    st.markdown("---")
+    st.markdown("### 👤 Autor")
+    st.markdown("**Dr. Robert Hernández Martínez**")
+
+# Client Initialization
+try:
+    nvidia_client = OpenAI(
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=os.getenv("NVIDIA_API_KEY")
+    )
+except Exception as e:
+    st.error(f"Error al inicializar el cliente NVIDIA NIMS: {str(e)}")
+    st.stop()
+
+# System Prompt specialized in Trade
+TRADE_PROMPT_TEMPLATE = """
+Eres un Asistente Experto (SME) en Comercio Exterior y Legislación Aduanera Mexicana/EE.UU.
+Tu objetivo es ayudar a importadores, exportadores y agentes aduanales a realizar análisis de cumplimiento.
 
 Instrucciones de Respuesta:
-1. **Análisis Normativo Riguroso**: Utiliza la legislación oficial presentada en el contexto (Ley Aduanera, LIGIE, RGCE, CFF, Tratados Comerciales).
-2. **Formato Financiero e Impuestos**: Si la consulta menciona montos o tasas de contribuciones, presenta los datos organizados formalmente con la notación y moneda correspondiente (ej. Valor en USD $, Contribuciones en MXN $, Tasas % e IGIE/DTA/IVA).
-3. **Referencias Legales**: Cita explícitamente los Artículos, Leyes, Anexos o Reglas que respaldan tu respuesta.
-4. **Opinión Experta & Disclaimers**: Proporciona tu opinión técnica e includes las advertencias/deslindes de responsabilidad normativa aplicables.
-5. **Matriz RAID OBLIGATORIA**: Finaliza SIEMPRE tu dictamen con una tabla Markdown de Matriz RAID (Riesgos, Acciones, Incidentes/Issues, Decisiones).
+1. Analiza exhaustivamente la consulta usando únicamente los fragmentos proporcionados.
+2. Presenta todas las cifras, tasas tributarias (IGE, IVA, DTA), valoraciones y métricas en sus formatos correspondientes (USD, MXN, %, etc.).
+3. Incluye referencias normativas específicas para cada afirmación (artículos de Ley Aduanera, Anexo 22, CFF, Capítulos T-MEC, etc.).
+4. Ofrece una opinión técnica sustentada y agrega un aviso de exención de responsabilidad (Disclaimer) al inicio o final.
+5. Finaliza OBLIGATORIAMENTE con una tabla RAID (Risks, Actions, Issues, Decisions) formateada en Markdown.
 
-Contexto Legal Disponible:
+Extractos Normativos Disponibles:
 {context}
 
 Consulta del Usuario: {question}
 
-Reporte Técnico Formal:
+Informe de Cumplimiento:
 """
 
-# --- UI SETUP ---
-st.set_page_config(layout="wide", page_title="Mexican Customs & Trade Assistant", page_icon="🛃")
-
-st.header("🛃 Asistente Especialista en Comercio Exterior y Operaciones Aduaneras (México - USMCA)")
-st.markdown("""
-Plataforma para la consulta de legislación aduanera, verificación de Reglas de Origen T-MEC, análisis normativo 
-y generación de reportes de cumplimiento e impacto operativo.
-""")
-
-with st.sidebar:
-    st.markdown("### 🛃 Trade SME Chatbot")
-    st.markdown("---")
-    st.markdown("### 👤 Autor")
-    st.markdown("**Dr. Robert Hernández Martínez**")
-    st.markdown("""
-        <a href="https://chomchom216.medium.com/" target="_blank">📝 Artículos en Medium</a><br>
-        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" target="_blank">🎓 Publicaciones Académicas</a><br>
-        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" target="_blank">🏆 Credenciales</a><br>
-        <a href="https://github.com/robert0777" target="_blank">🐙 GitHub</a><br>
-        <a href="mailto:robert@actuariayfinanzas.net">📧 Contacto</a>
-    """, unsafe_allow_html=True)
-    st.markdown("---")
-    st.caption("© 2026 Mexican Customs AI Chatbot")
-
 if 'greeting_handler' not in st.session_state:
-    st.session_state.greeting_handler = TradeGreetingHandler()
+    st.session_state.greeting_handler = GreetingHandler()
 
-# Load vectorstore from cache
-vectorstore = get_vectorstore()
+prompt1 = st.text_input(
+    "Introduzca su consulta sobre comercio exterior:",
+    placeholder="Ej: ¿Cuáles son las reglas de origen aplicables bajo el T-MEC para el sector automotriz?"
+)
 
-if st.button("Cargar e Indizar Regulaciones PDF (FAISS VectorStore)"):
-    with st.spinner("Indizando/Cargando documentos normativos..."):
+if st.button("Cargar y Procesar Documentos Aduaneros"):
+    with st.spinner('Cargando expediente de normativa en pdf_files_comercio_exterior...'):
         try:
-            start_time = datetime.datetime.now()
-            vectorstore = build_and_save_vectorstore()
-            duration = (datetime.datetime.now() - start_time).total_seconds()
-            st.success(f"Base documental cargada exitosamente en {duration:.2f} segundos.")
+            start_time = time.process_time()
+            load_documents()
+            processing_time = time.process_time() - start_time
+            st.success(f"📚 Expediente cargado exitosamente en {processing_time:.2f} segundos.")
         except Exception as e:
-            st.error(f"Error al procesar la carpeta de regulaciones: {str(e)}")
+            st.error(f"Error al cargar los documentos: {str(e)}")
 
-user_query = st.text_input("Ingrese su consulta operativa o normativa de comercio exterior:")
-
-if user_query:
-    is_greeting, greeting_resp, actual_q = st.session_state.greeting_handler.process_input(user_query)
+if prompt1:
+    is_greeting, greeting_response, actual_question = st.session_state.greeting_handler.process_input(prompt1)
     
-    if is_greeting and greeting_resp:
-        st.info(greeting_resp)
+    if is_greeting:
+        st.write(greeting_response)
         
-    if actual_q:
-        if vectorstore is None:
-            st.warning("⚠️ Primero cargue los documentos ejecutando el botón 'Cargar e Indizar Regulaciones PDF'")
-        else:
+    if actual_question:
+        if "documents" in st.session_state:
             try:
-                with st.status("Procesando dictamen técnico...", expanded=True) as status:
-                    st.write("🔍 Consultando índice vectorial FAISS...")
-                    relevant_docs = vectorstore.similarity_search(actual_q, k=3)
+                with st.spinner('Generando reporte de cumplimiento aduanero...'):
+                    start = time.process_time()
+                    selected_chunks = select_relevant_chunks(actual_question, st.session_state.documents)
                     
-                    docs_context = [
-                        f"--- Documento Legal #{i} [{Path(doc.metadata.get('source', 'Desconocido')).name}] ---\n{doc.page_content}"
-                        for i, doc in enumerate(relevant_docs, 1)
-                    ]
-                    formatted_context = "\n\n".join(docs_context)
+                    docs_used = {}
+                    for chunk in selected_chunks:
+                        doc_name = Path(chunk.metadata['source']).name
+                        if doc_name not in docs_used:
+                            docs_used[doc_name] = []
+                        docs_used[doc_name].append(chunk.page_content)
                     
-                    st.write("🤖 Generando respuesta con NVIDIA Nemotron...")
-                    llm = get_nvidia_llm()
-                    prompt = TRADE_SME_PROMPT_TEMPLATE.format(context=formatted_context, question=actual_q)
+                    context_parts = []
+                    for doc_name, contents in docs_used.items():
+                        context_parts.append(f"[Documento Legal: {doc_name}]\n" + "\n".join(contents))
                     
-                    response_container = st.empty()
-                    chunks = []
-                    for chunk in llm.stream([HumanMessage(content=prompt)]):
-                        chunks.append(chunk.content)
-                        response_container.markdown("".join(chunks))
+                    context = truncate_context("\n\n".join(context_parts))
                     
-                    final_output = "".join(chunks)
-                    status.update(label="Dictamen completado", state="complete", expanded=False)
-                
-                # Footnotes / Referenced Extracts
-                with st.expander("📂 Ver extractos normativos consultados"):
-                    for doc in relevant_docs:
-                        source_name = Path(doc.metadata.get('source', 'Desconocido')).name
-                        st.write(f"**{source_name}**")
-                        st.caption(doc.page_content)
+                    completion = nvidia_client.chat.completions.create(
+                        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                        messages=[
+                            {"role": "system", "content": "/think"},
+                            {
+                                "role": "user",
+                                "content": TRADE_PROMPT_TEMPLATE.format(
+                                    context=context,
+                                    question=actual_question
+                                )
+                            }
+                        ],
+                        temperature=0.3,
+                        top_p=0.95,
+                        max_tokens=4000,
+                        stream=False
+                    )
                     
+                    st.write("📋 Reporte Técnico de Cumplimiento:")
+                    st.write(completion.choices[0].message.content)
+                    st.info(f"⏱️ Tiempo de respuesta: {time.process_time() - start:.2f} segundos")
+                    
+                    with st.expander("Ver Fuentes Consultadas"):
+                        for doc_name, doc_chunks in docs_used.items():
+                            st.write(f"**{doc_name}**")
+                            for chunk in doc_chunks:
+                                st.caption(chunk)
             except Exception as e:
-                st.error(f"Error durante la consulta del modelo: {str(e)}")
+                st.error(f"Error en la consulta: {str(e)}")
+        else:
+            st.warning("⚠️ Por favor cargue los documentos antes de realizar la consulta.")
