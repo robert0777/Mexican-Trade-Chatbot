@@ -74,7 +74,6 @@ def select_relevant_chunks(question: str, chunks: list, max_total_tokens: int = 
             current_tokens += tokens
     return selected
 
-# Direct PDF Builder Function (Bypasses LLM Tool Execution Delays)
 def build_pdf_report(title: str, body_text: str, filename: str = "USMCA_Compliance_Report.pdf") -> str:
     pdf_path = Path(filename)
     doc = SimpleDocTemplate(str(pdf_path), pagesize=letter)
@@ -154,7 +153,7 @@ def get_agent_executor():
         "- If the user writes in English, respond ENTIRELY in English.\n"
         "- If the user writes in Spanish, respond ENTIRELY in Spanish.\n"
         "REASONING & CALCULATIONS:\n"
-        "- Always calculate duties using `calculate_usmca_import_duties` when values are provided.\n"
+        "- Always calculate duties using `calculate_usmca_import_duties` when monetary values are provided.\n"
         "- Detail phytosanitary (USDA/APHIS, SENASICA) and customs clearance requirements."
     )
     
@@ -197,7 +196,7 @@ if st.session_state.lang == "English":
     tool_exec_label = "🛠️ **Executing Tool:**"
     tool_obs_label = "👁️ **Tool Observation:**"
     result_header = "### 📝 Compliance Assessment & Action Plan:"
-    pdf_btn_text = "📄 Generate & Download Official PDF Report"
+    pdf_btn_text = "📄 Download Official PDF Report"
 else:
     title_text = "📦 Agente Autónomo de Comercio Exterior T-MEC"
     desc_text = "> **Asistente Especializado en Cumplimiento T-MEC (México-EUA-Canadá)**"
@@ -206,7 +205,7 @@ else:
     tool_exec_label = "🛠️ **Ejecutando Herramienta:**"
     tool_obs_label = "👁️ **Observación de Herramienta:**"
     result_header = "### 📝 Dictamen y Plan de Acción:"
-    pdf_btn_text = "📄 Generar y Descargar Dictamen Oficial en PDF"
+    pdf_btn_text = "📄 Descargar Dictamen Oficial en PDF"
 
 st.title(title_text)
 st.markdown(desc_text)
@@ -214,10 +213,21 @@ st.markdown(desc_text)
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display Messages
-for msg in st.session_state.messages:
+# Persistent Message Rendering
+for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        
+        # Render persistent download button under the corresponding assistant message
+        if msg["role"] == "assistant" and "pdf_path" in msg and os.path.exists(msg["pdf_path"]):
+            with open(msg["pdf_path"], "rb") as file:
+                st.download_button(
+                    label=pdf_btn_text,
+                    data=file,
+                    file_name="USMCA_Compliance_Report.pdf",
+                    mime="application/pdf",
+                    key=f"dl_history_{idx}"
+                )
 
 # User Input Loop
 if prompt := st.chat_input(input_placeholder):
@@ -245,32 +255,43 @@ if prompt := st.chat_input(input_placeholder):
                 elapsed = time.time() - start_time
                 status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # Safely parse text response
+            # Robust Response Extraction
             ai_texts = []
             for msg in response["messages"]:
                 if msg.type == "ai" and hasattr(msg, 'content'):
                     if isinstance(msg.content, str) and msg.content.strip():
                         ai_texts.append(msg.content.strip())
+                    elif isinstance(msg.content, list):
+                        for block in msg.content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                ai_texts.append(block.get("text", ""))
 
             final_answer = "\n\n".join(ai_texts) if ai_texts else "USMCA compliance analysis complete."
 
             st.markdown(result_header)
             st.markdown(final_answer)
-            st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
-            # Render Direct PDF Generation Download Button
-            pdf_path = build_pdf_report(
+            # Generate PDF and attach path directly to the assistant message dict
+            generated_pdf_path = build_pdf_report(
                 title="USMCA Trade Compliance Report", 
-                body_text=final_answer
+                body_text=final_answer,
+                filename=f"USMCA_Report_{int(time.time())}.pdf"
             )
-            
-            with open(pdf_path, "rb") as file:
+
+            st.session_state.messages.append({
+                "role": "assistant", 
+                "content": final_answer,
+                "pdf_path": generated_pdf_path
+            })
+
+            # Render immediate download button for the active turn
+            with open(generated_pdf_path, "rb") as file:
                 st.download_button(
                     label=pdf_btn_text,
                     data=file,
                     file_name="USMCA_Compliance_Report.pdf",
                     mime="application/pdf",
-                    key=f"dl_btn_{int(time.time())}"
+                    key=f"dl_active_{int(time.time())}"
                 )
 
         except Exception as e:
