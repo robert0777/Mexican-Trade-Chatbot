@@ -26,7 +26,7 @@ def initialize_trade_vector_db(force_reindex: bool = False):
     """Builds or loads a FAISS vector store from disk with truncation protection."""
     api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
     
-    # FIX 1: Set truncate="END" so inputs over 512 tokens are truncated instead of throwing 400 Bad Request
+    # Set truncate="END" so inputs over 512 tokens are truncated automatically
     embeddings = NVIDIAEmbeddings(
         model="nvidia/nv-embedqa-e5-v5", 
         api_key=api_key,
@@ -51,7 +51,7 @@ def initialize_trade_vector_db(force_reindex: bool = False):
     if not docs:
         return None
 
-    # FIX 2: Reduced chunk_size from 600 to 400 characters to stay comfortably under 512 tokens
+    # Reduced chunk_size to 400 characters to stay comfortably under 512 tokens
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
     split_docs = text_splitter.split_documents(docs)
 
@@ -171,7 +171,7 @@ def get_trade_agent():
     return create_react_agent(llm, tools, prompt=system_prompt)
 
 # ==============================================================================
-# 4. Streamlit User Interface
+# 4. Streamlit User Interface (Instant Load Setup)
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Universal USMCA Customs Desk", page_icon="🛃")
 
@@ -194,8 +194,8 @@ with st.sidebar:
 st.title("📦 Universal USMCA / T-MEC Autonomous Trade Desk")
 st.caption("High-Speed AI Agent for Duty Calculation, Tariff Classification & Regulatory Compliance")
 
-# Auto-initialize FAISS from disk on launch
-initialize_trade_vector_db()
+# NOTE: Vector DB initialization is deferred until a query invokes search_trade_regulations
+# to ensure instant page loading upon user launch.
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
