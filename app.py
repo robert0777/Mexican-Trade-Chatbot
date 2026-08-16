@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # PDF Generation Imports
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -33,7 +33,7 @@ def get_tokenizer():
 def count_tokens(text: str) -> int:
     return len(get_tokenizer().encode(text))
 
-def normalize_spanish_text(text: str) -> str:
+def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
@@ -48,17 +48,17 @@ def load_documents():
         docs = loader.load()
         if docs:
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=500, 
+                chunk_size=350, 
                 chunk_overlap=50, 
                 length_function=count_tokens
             )
             for doc in docs:
-                doc.page_content = normalize_spanish_text(doc.page_content)
+                doc.page_content = normalize_text(doc.page_content)
             st.session_state.documents = text_splitter.split_documents(docs)
         else:
             st.session_state.documents = []
 
-def select_relevant_chunks(question: str, chunks: list, max_total_tokens: int = 4000) -> list:
+def select_relevant_chunks(question: str, chunks: list, max_total_tokens: int = 2000) -> list:
     """Selects the top matching text chunks based on word overlap relevance."""
     question_words = set(question.lower().split())
     scored_chunks = []
@@ -78,24 +78,30 @@ def select_relevant_chunks(question: str, chunks: list, max_total_tokens: int = 
     return selected
 
 # ==============================================================================
-# 2. Autonomous Agentic Tools
+# 2. Autonomous Agentic Tools (Bilingual Capabilities)
 # ==============================================================================
 @tool
 def buscar_regulaciones_aduaneras(consulta: str) -> str:
-    """Busca en los documentos PDF cargados regulaciones arancelarias, TIGIE, NOMs y tratados (T-MEC, TLCUEM)."""
+    """
+    Search in loaded PDF documents for Mexican customs regulations, TIGIE tariffs, NOMs, and trade agreements (USMCA/T-MEC, EU-Mexico/TLCUEM).
+    Busca en los documentos PDF cargados regulaciones arancelarias, TIGIE, NOMs y tratados (T-MEC, TLCUEM).
+    """
     if "documents" not in st.session_state or not st.session_state.documents:
-        return "No hay documentos PDF cargados en la base de datos local."
+        return "No local PDF documents loaded in memory. / No hay documentos PDF cargados."
     
     chunks = select_relevant_chunks(consulta, st.session_state.documents)
     if not chunks:
-        return "No se encontraron fragmentos relevantes en la base de datos de documentos."
+        return "No relevant text chunks found in local docs. / No se encontraron fragmentos relevantes."
         
     context = "\n\n".join([f"[Doc: {Path(c.metadata['source']).name}]\n{c.page_content}" for c in chunks])
     return context
 
 @tool
 def calcular_impuestos_importacion(valor_factura: float, flete: float, seguro: float, tasa_ige: float, tiene_certificado_origen: bool) -> dict:
-    """Calcula la base gravable CIF, el arancel IGE, el DTA, el IVA (16%) y el costo total estimado de importación en México."""
+    """
+    Calculates CIF base value, ad-valorem duty (IGE), customs handling fee (DTA), Value Added Tax (IVA 16%), and total landed import cost in Mexico.
+    Calcula la base gravable CIF, el arancel IGE, el DTA, el IVA (16%) y el costo total estimado de importación en México.
+    """
     cif = valor_factura + flete + seguro
     effective_ige = 0.0 if tiene_certificado_origen else tasa_ige
     ige_amount = cif * effective_ige
@@ -104,17 +110,20 @@ def calcular_impuestos_importacion(valor_factura: float, flete: float, seguro: f
     total_landed = cif + ige_amount + dta_amount + iva_amount
     
     return {
-        "valor_cif": round(cif, 2),
-        "monto_ige": round(ige_amount, 2),
-        "monto_dta": round(dta_amount, 2),
-        "monto_iva": round(iva_amount, 2),
-        "costo_total_estimado": round(total_landed, 2)
+        "valor_cif_cif_value": round(cif, 2),
+        "monto_ige_duty": round(ige_amount, 2),
+        "monto_dta_customs_fee": round(dta_amount, 2),
+        "monto_iva_vat": round(iva_amount, 2),
+        "costo_total_estimado_total_landed_cost": round(total_landed, 2)
     }
 
 @tool
 def exportar_dictamen_pdf(titulo: str, resumen_ejecutivo: str, desglose_costos: str, requisitos_documentales: str) -> str:
-    """Genera un reporte oficial descargable en formato PDF con el dictamen de comercio exterior y la lista de verificación."""
-    pdf_filename = "Dictamen_Comercio_Exterior.pdf"
+    """
+    Generates a downloadable official PDF compliance report and document checklist in English or Spanish.
+    Genera un reporte oficial descargable en formato PDF con el dictamen de comercio exterior y la lista de verificación.
+    """
+    pdf_filename = "Customs_Compliance_Report.pdf"
     pdf_path = Path(pdf_filename)
     
     doc = SimpleDocTemplate(str(pdf_path), pagesize=letter)
@@ -139,86 +148,134 @@ def exportar_dictamen_pdf(titulo: str, resumen_ejecutivo: str, desglose_costos: 
     body_style.spaceAfter = 8
 
     story = []
+    lang = st.session_state.get('lang', 'Español')
     
+    # Subtitle adaptation
+    sub_title = "Agente Inteligente de Comercio Exterior y Aduanas" if lang == "Español" else "Intelligent Customs & Foreign Trade Agent"
+    sec1 = "1. Resumen Ejecutivo y Dictamen" if lang == "Español" else "1. Executive Summary & Assessment"
+    sec2 = "2. Desglose Estimado de Impuestos y Gastos (CIF/IVA)" if lang == "Español" else "2. Estimated Duty & Tax Breakdown (CIF/VAT)"
+    sec3 = "3. Lista de Verificación Documental para Pedimento" if lang == "Español" else "3. Customs Clearance Document Checklist"
+
     # Title & Header
     story.append(Paragraph(f"<b>{titulo}</b>", title_style))
-    story.append(Paragraph("<b>Agente Inteligente de Comercio Exterior y Aduanas</b>", styles['Normal']))
+    story.append(Paragraph(f"<b>{sub_title}</b>", styles['Normal']))
     story.append(Spacer(1, 12))
     
-    # Resumen
-    story.append(Paragraph("1. Resumen Ejecutivo y Dictamen", heading_style))
+    # Sections
+    story.append(Paragraph(sec1, heading_style))
     story.append(Paragraph(resumen_ejecutivo.replace('\n', '<br/>'), body_style))
     story.append(Spacer(1, 10))
     
-    # Costos
-    story.append(Paragraph("2. Desglose Estimado de Impuestos y Gastos (CIF/IVA)", heading_style))
+    story.append(Paragraph(sec2, heading_style))
     story.append(Paragraph(desglose_costos.replace('\n', '<br/>'), body_style))
     story.append(Spacer(1, 10))
     
-    # Requisitos Documentales
-    story.append(Paragraph("3. Lista de Verificación Documental para Pedimento", heading_style))
+    story.append(Paragraph(sec3, heading_style))
     story.append(Paragraph(requisitos_documentales.replace('\n', '<br/>'), body_style))
     
     doc.build(story)
     
-    # Flag in session state to trigger downloadable widget
     st.session_state['latest_pdf_generated'] = str(pdf_path)
-    return f"Reporte PDF generado exitosamente con el nombre {pdf_filename}."
+    return f"PDF report successfully generated: {pdf_filename}"
 
 tools = [buscar_regulaciones_aduaneras, calcular_impuestos_importacion, exportar_dictamen_pdf]
 
 # ==============================================================================
-# 3. Agent Executor Initialization
+# 3. Agent Executor Initialization (With Bilingual Prompt Instruction)
 # ==============================================================================
 @st.cache_resource
 def get_agent_executor():
     api_key = os.getenv("NVIDIA_API_KEY") or st.secrets.get("NVIDIA_API_KEY")
     if not api_key:
-        st.error("NVIDIA_API_KEY no configurada. Agréguela al archivo .env o a st.secrets.")
+        st.error("NVIDIA_API_KEY not configured. Add it to .env or st.secrets.")
         st.stop()
         
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.2,
-        api_key=api_key
+        api_key=api_key,
+        timeout=180,  
+        max_retries=3  
     )
-    return create_react_agent(llm, tools)
+    
+    # System prompt enforcing language auto-detection and execution guidance
+    system_prompt = (
+        "You are an expert Autonomous Trade & Customs Agent for Mexican international trade (USMCA, EU-Mexico).\n"
+        "1. LANGUAGE: Automatically detect the user's language (English or Spanish) and respond fully in that language.\n"
+        "2. REASONING: Use tools autonomously to search regulations, compute import duties, or export PDF reports.\n"
+        "3. PRECISION: Provide explicit references to tariff rules (TIGIE), NOM safety standards, or certificate of origin benefits."
+    )
+    
+    return create_react_agent(llm, tools, prompt=system_prompt)
 
 # ==============================================================================
-# 4. Streamlit User Interface
+# 4. Streamlit User Interface & Localization
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Agente de Comercio Exterior", page_icon="📦")
+st.set_page_config(layout="wide", page_title="Customs Agent AI / Agente de Aduanas", page_icon="📦")
 
-# Header & Callout
-st.title("📦 Agente Autónomo de Comercio Exterior y Aduanas")
-st.markdown("""
-> **¿Qué hace diferente a este Agente de un Chatbot tradicional?**  
-> 1. **Razonamiento y Planificación**: Analiza objetivos y decide qué pasos ejecutar de forma autónoma.  
-> 2. **Ejecución de Herramientas**: Consulta leyes/tratados en PDF, calcula impuestos (*CIF, IGE, DTA, IVA*) y **genera reportes PDF**.  
-> 3. **Visibilidad en Tiempo Real**: Muestra el razonamiento, las observaciones y la llamada a herramientas durante el proceso.
-""")
-
-# Sidebar Configuration & Document Processing
+# Sidebar - Language Selection & Settings
 with st.sidebar:
-    st.markdown("### ⚙️ Configuración del Agente")
-    st.markdown("**Autor:** Dr. Robert Hernández Martínez")
+    st.markdown("### 🌐 Language / Idioma")
+    selected_lang = st.radio("Select Language / Seleccione Idioma", ["Español", "English"], index=0, key="lang_radio")
+    st.session_state.lang = selected_lang
+    
+    st.markdown("---")
+    st.markdown("### ⚙️ " + ("Configuración" if st.session_state.lang == "Español" else "Settings"))
+    st.markdown("**Author / Autor:** Dr. Robert Hernández Martínez")
     st.markdown("---")
     
-    if st.button("🔄 Cargar / Actualizar PDFs Locales"):
-        with st.spinner("Cargando documentos de ./pdf_files_comercio_exterior..."):
+    btn_label = "🔄 Cargar / Actualizar PDFs Locales" if st.session_state.lang == "Español" else "🔄 Load / Refresh Local PDFs"
+    if st.button(btn_label):
+        with st.spinner("Processing ./pdf_files_comercio_exterior..."):
             load_documents()
             num_chunks = len(st.session_state.get('documents', []))
             if num_chunks > 0:
-                st.success(f"Cargados {num_chunks} fragmentos de documentos.")
+                msg = f"Cargados {num_chunks} fragmentos de documentos." if st.session_state.lang == "Español" else f"Loaded {num_chunks} document chunks."
+                st.success(msg)
             else:
-                st.warning("No se encontraron archivos PDF en la carpeta ./pdf_files_comercio_exterior")
+                msg = "No se encontraron PDFs en ./pdf_files_comercio_exterior" if st.session_state.lang == "Español" else "No PDFs found in ./pdf_files_comercio_exterior"
+                st.warning(msg)
 
     st.markdown("---")
     st.markdown("""
         <div style="font-size: 0.8rem; color: #6B7280; text-align: center;">
-            © 2026 Agente de Comercio Exterior MX
+            © 2026 Customs Agent AI MX
         </div>
     """, unsafe_allow_html=True)
+
+# UI Text Dictionaries
+if st.session_state.lang == "Español":
+    title_text = "📦 Agente Autónomo de Comercio Exterior y Aduanas"
+    desc_text = """
+    > **¿Qué hace diferente a este Agente de un Chatbot tradicional?**  
+    > 1. **Razonamiento y Planificación**: Analiza objetivos y decide qué pasos ejecutar de forma autónoma en **Inglés o Español**.  
+    > 2. **Ejecución de Herramientas**: Consulta leyes/tratados en PDF, calcula impuestos (*CIF, IGE, DTA, IVA*) y **genera reportes PDF**.  
+    > 3. **Visibilidad en Tiempo Real**: Muestra el razonamiento, observaciones y llamada a herramientas durante el proceso.
+    """
+    input_placeholder = "Describa su embarque o solicite un dictamen en PDF (Español o Inglés)..."
+    status_label = "🧠 El Agente está evaluando la consulta y ejecutando herramientas..."
+    tool_exec_label = "🛠️ **Ejecutando Herramienta:**"
+    tool_obs_label = "👁️ **Observación de Herramienta:**"
+    result_header = "### 📝 Dictamen y Plan de Acción:"
+    download_btn_label = "📄 Descargar Dictamen Oficial en PDF"
+else:
+    title_text = "📦 Autonomous Customs & Foreign Trade Agent"
+    desc_text = """
+    > **What sets this Agent apart from a standard Chatbot?**  
+    > 1. **Reasoning & Planning**: Autonomously breaks down goals and plans execution steps in **English or Spanish**.  
+    > 2. **Tool Execution**: Searches PDF legal texts, computes landed duty/taxes (*CIF, IGE, DTA, VAT*), and **generates PDF compliance reports**.  
+    > 3. **Real-time Transparency**: Displays tool invocations, inputs, and intermediate observations as it works.
+    """
+    input_placeholder = "Describe your shipment or request a PDF compliance report (English or Spanish)..."
+    status_label = "🧠 Agent is analyzing query and invoking tools..."
+    tool_exec_label = "🛠️ **Executing Tool:**"
+    tool_obs_label = "👁️ **Tool Observation:**"
+    result_header = "### 📝 Compliance Assessment & Action Plan:"
+    download_btn_label = "📄 Download Official PDF Report"
+
+# Header Render
+st.title(title_text)
+st.markdown(desc_text)
 
 # Initialize Session Chat History
 if "messages" not in st.session_state:
@@ -230,7 +287,7 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # User Chat Loop
-if prompt := st.chat_input("Describa su embarque o solicite un dictamen en PDF..."):
+if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -239,7 +296,7 @@ if prompt := st.chat_input("Describa su embarque o solicite un dictamen en PDF..
         try:
             agent_executor = get_agent_executor()
             
-            with st.status("🧠 El Agente está evaluando la consulta y ejecutando herramientas...", expanded=True) as status:
+            with st.status(status_label, expanded=True) as status:
                 start_time = time.time()
                 response = agent_executor.invoke({"messages": [("user", prompt)]})
                 
@@ -247,18 +304,18 @@ if prompt := st.chat_input("Describa su embarque o solicite un dictamen en PDF..
                 for message in response["messages"]:
                     if hasattr(message, 'tool_calls') and message.tool_calls:
                         for tool_call in message.tool_calls:
-                            st.write(f"🛠️ **Ejecutando Herramienta:** `{tool_call['name']}`")
+                            st.write(f"{tool_exec_label} `{tool_call['name']}`")
                             st.json(tool_call['args'])
                     elif message.type == "tool":
-                        st.write("👁️ **Observación de Herramienta:**")
+                        st.write(tool_obs_label)
                         st.caption(str(message.content)[:300] + "...")
                         
                 elapsed = time.time() - start_time
-                status.update(label=f"Análisis completado en {elapsed:.2f} segundos", state="complete", expanded=False)
+                status.update(label=f"Done in {elapsed:.2f}s / Completado en {elapsed:.2f}s", state="complete", expanded=False)
 
             # Render Final Agent Response
             final_answer = response["messages"][-1].content
-            st.markdown("### 📝 Dictamen y Plan de Acción:")
+            st.markdown(result_header)
             st.markdown(final_answer)
             
             # Display PDF Download Button if generated
@@ -266,13 +323,13 @@ if prompt := st.chat_input("Describa su embarque o solicite un dictamen en PDF..
                 pdf_path = st.session_state['latest_pdf_generated']
                 with open(pdf_path, "rb") as file:
                     st.download_button(
-                        label="📄 Descargar Dictamen Oficial en PDF",
+                        label=download_btn_label,
                         data=file,
-                        file_name="Dictamen_Comercio_Exterior.pdf",
+                        file_name="Customs_Compliance_Report.pdf",
                         mime="application/pdf"
                     )
 
             st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
         except Exception as e:
-            st.error(f"Error durante la ejecución del Agente: {str(e)}")
+            st.error(f"Execution Error / Error de Ejecución: {str(e)}")
