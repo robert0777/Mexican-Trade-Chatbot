@@ -31,7 +31,7 @@ def get_nvidia_llm():
     return ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.3,
-        max_tokens=4000
+        max_tokens=2500  # Reduced to speed up response generation time
     )
 
 @st.cache_resource
@@ -39,12 +39,16 @@ def get_nvidia_embeddings():
     """Cache the NVIDIA Embeddings instance."""
     return NVIDIAEmbeddings(model="NV-Embed-QA")
 
-def load_or_create_vectorstore():
-    """Loads existing FAISS index from disk, or creates and saves a new one."""
+@st.cache_resource
+def get_vectorstore():
+    """Loads FAISS index into memory once and caches it across re-runs."""
     embeddings = get_nvidia_embeddings()
     if Path(FAISS_INDEX_PATH).exists():
         return FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-    
+    return None
+
+def build_and_save_vectorstore():
+    """Only called explicitly when re-indexing files."""
     pdf_dir = Path("./pdf_files_comercio_exterior")
     if not pdf_dir.exists() or not list(pdf_dir.glob("*.pdf")):
         raise FileNotFoundError("No se encontraron regulaciones en PDF en './pdf_files_comercio_exterior'")
@@ -52,16 +56,17 @@ def load_or_create_vectorstore():
     loader = PyPDFDirectoryLoader(path="./pdf_files_comercio_exterior", silent_errors=True, recursive=False)
     raw_docs = loader.load()
     
-    # Switched length_function from tiktoken to default len (character length) for 100x faster execution
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=150,
+        chunk_size=1000,
+        chunk_overlap=100,
         separators=["\n\n", "\n", "Artículo", "ARTÍCULO", ".", ";", " ", ""]
     )
     split_docs = text_splitter.split_documents(raw_docs)
     
+    embeddings = get_nvidia_embeddings()
     vectorstore = FAISS.from_documents(split_docs, embeddings)
     vectorstore.save_local(FAISS_INDEX_PATH)
+    get_vectorstore.clear()  # Clear cache to force reload on next call
     return vectorstore
 
 # --- GREETING HANDLER ---
@@ -183,15 +188,14 @@ with st.sidebar:
 if 'greeting_handler' not in st.session_state:
     st.session_state.greeting_handler = TradeGreetingHandler()
 
-# Automatically attempt to load vectorstore on boot if index exists, or on button trigger
-if "vectorstore" not in st.session_state and Path(FAISS_INDEX_PATH).exists():
-    st.session_state.vectorstore = load_or_create_vectorstore()
+# Load vectorstore from cache
+vectorstore = get_vectorstore()
 
 if st.button("Cargar e Indizar Regulaciones PDF (FAISS VectorStore)"):
     with st.spinner("Indizando/Cargando documentos normativos..."):
         try:
             start_time = datetime.datetime.now()
-            st.session_state.vectorstore = load_or_create_vectorstore()
+            vectorstore = build_and_save_vectorstore()
             duration = (datetime.datetime.now() - start_time).total_seconds()
             st.success(f"Base documental cargada exitosamente en {duration:.2f} segundos.")
         except Exception as e:
@@ -206,14 +210,13 @@ if user_query:
         st.info(greeting_resp)
         
     if actual_q:
-        if "vectorstore" not in st.session_state:
+        if vectorstore is None:
             st.warning("⚠️ Primero cargue los documentos ejecutando el botón 'Cargar e Indizar Regulaciones PDF'")
         else:
             try:
-                # Use st.status to show real-time progress steps to the user
                 with st.status("Procesando dictamen técnico...", expanded=True) as status:
                     st.write("🔍 Consultando índice vectorial FAISS...")
-                    relevant_docs = st.session_state.vectorstore.similarity_search(actual_q, k=4)
+                    relevant_docs = vectorstore.similarity_search(actual_q, k=3)  # Reduced k to 3 for speed
                     
                     docs_context = [
                         f"--- Documento Legal #{i} [{Path(doc.metadata.get('source', 'Desconocido')).name}] ---\n{doc.page_content}"
@@ -225,7 +228,6 @@ if user_query:
                     llm = get_nvidia_llm()
                     prompt = TRADE_SME_PROMPT_TEMPLATE.format(context=formatted_context, question=actual_q)
                     
-                    # Streaming response for low apparent latency
                     response_container = st.empty()
                     chunks = []
                     for chunk in llm.stream([HumanMessage(content=prompt)]):
@@ -235,17 +237,17 @@ if user_query:
                     final_output = "".join(chunks)
                     status.update(label="Dictamen completado", state="complete", expanded=False)
                 
-                # Footnotes & Download
+                # Footnotes
                 with st.expander("📂 Ver extractos normativos consultados"):
                     for doc in relevant_docs:
                         source_name = Path(doc.metadata.get('source', 'Desconocido')).name
                         st.write(f"**{source_name}**")
                         st.caption(doc.page_content)
-                        
-                pdf_bytes = generate_pdf_report(final_output)
+                
+                # Lazy PDF Generation: Only runs when user clicks download
                 st.download_button(
                     label="📄 Descargar Dictamen Técnico en PDF",
-                    data=pdf_bytes,
+                    data=generate_pdf_report(final_output),
                     file_name="Dictamen_Comercio_Exterior_SME.pdf",
                     mime="application/pdf"
                 )
