@@ -5,12 +5,6 @@ import time
 from pathlib import Path
 from dotenv import load_dotenv
 
-# PDF Generation Imports
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-
 # LangChain, LangGraph & Model Imports
 from langchain_core.tools import tool
 from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings
@@ -47,7 +41,7 @@ def initialize_trade_vector_db():
     return FAISS.from_documents(split_docs, embeddings)
 
 # ==============================================================================
-# 2. Autonomous Trade Agent Tools
+# 2. Autonomous Trade Agent Tools (Direct UI Calculations)
 # ==============================================================================
 @tool
 def search_trade_regulations(query: str) -> str:
@@ -65,11 +59,11 @@ def search_trade_regulations(query: str) -> str:
 @tool
 def calculate_mexican_import_duties(
     invoice_value_usd: float,
-    freight_usd: float,
-    insurance_usd: float,
-    exchange_rate_mxn: float,
-    ige_duty_rate: float,
-    has_usmca_certificate: bool,
+    freight_usd: float = 0.0,
+    insurance_usd: float = 0.0,
+    exchange_rate_mxn: float = 20.0,
+    ige_duty_rate: float = 0.0,
+    has_usmca_certificate: bool = True,
     apply_border_vat: bool = False
 ) -> dict:
     """
@@ -130,52 +124,10 @@ def calculate_us_import_duties(
         "total_us_duties_usd": round(total_duties, 2)
     }
 
-@tool
-def generate_customs_compliance_report(
-    title: str, 
-    executive_summary: str, 
-    tax_breakdown: str, 
-    document_checklist: str
-) -> str:
-    """
-    Generates an official downloadable USMCA trade compliance report (PDF).
-    Trigger this tool whenever a report, PDF, or formal assessment is requested.
-    """
-    pdf_filename = "USMCA_Customs_Compliance_Report.pdf"
-    pdf_path = Path(pdf_filename)
-    
-    doc = SimpleDocTemplate(str(pdf_path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
-    styles = getSampleStyleSheet()
-    
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#0F172A'), spaceAfter=12)
-    heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=12, textColor=colors.HexColor('#1E40AF'), spaceBefore=10, spaceAfter=6)
-    body_style = styles['BodyText']
-    body_style.fontSize = 9
-    body_style.spaceAfter = 6
-
-    story = [
-        Paragraph(f"<b>{title}</b>", title_style),
-        Paragraph("<b>USMCA / T-MEC Customs Compliance Technical Assessment</b>", styles['Normal']),
-        Spacer(1, 10),
-        Paragraph("1. Executive Summary & Legal Framework", heading_style),
-        Paragraph(executive_summary.replace('\n', '<br/>'), body_style),
-        Spacer(1, 8),
-        Paragraph("2. Duty & Customs Fee Breakdown", heading_style),
-        Paragraph(tax_breakdown.replace('\n', '<br/>'), body_style),
-        Spacer(1, 8),
-        Paragraph("3. Operational Clearance & VUCEM/FDA Checklist", heading_style),
-        Paragraph(document_checklist.replace('\n', '<br/>'), body_style)
-    ]
-    
-    doc.build(story)
-    st.session_state['latest_pdf_generated'] = str(pdf_path)
-    return f"PDF report successfully generated: {pdf_filename}"
-
 tools = [
     search_trade_regulations, 
     calculate_mexican_import_duties, 
-    calculate_us_import_duties, 
-    generate_customs_compliance_report
+    calculate_us_import_duties
 ]
 
 # ==============================================================================
@@ -191,7 +143,8 @@ def get_trade_agent():
     llm = ChatNVIDIA(
         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
         temperature=0.1,
-        max_tokens=4096,
+        max_tokens=2048,
+        timeout=180,  # Extended socket timeout to eliminate HTTPS Read Timeout errors
         api_key=api_key
     )
     
@@ -203,8 +156,8 @@ def get_trade_agent():
         "2. CROSS-BORDER DIRECTION:\n"
         "   - Exports from Mexico to the US (e.g., Texas): Use `calculate_us_import_duties` to evaluate US CBP entry rules.\n"
         "   - Imports into Mexico: Use `calculate_mexican_import_duties` for Pedimento tax calculation.\n"
-        "3. TOOL CALLING: Execute `search_trade_regulations` for legal validation and `generate_customs_compliance_report` whenever a PDF is requested.\n"
-        "4. FINAL TEXT SUMMARY: Write a complete final answer in the chat after executing tools. Summarize duty totals, HTS codes, phytosanitary requirements (USDA/SENASICA/FDA), and confirm PDF generation."
+        "3. TOOL CALLING: Execute `search_trade_regulations` for legal validation.\n"
+        "4. UI PRESENTATION: Present final calculations, duty breakdowns, HTS codes, and required compliance documents (USDA/SENASICA/FDA) directly in clear, beautifully formatted Markdown in the chat."
     )
     
     return create_react_agent(llm, tools, prompt=system_prompt)
@@ -231,42 +184,19 @@ with st.sidebar:
             else:
                 st.warning("No PDFs found to index in ./pdf_files_comercio_exterior.")
 
-    # Persistent Sidebar Download Button
-    if 'latest_pdf_generated' in st.session_state and os.path.exists(st.session_state['latest_pdf_generated']):
-        st.markdown("---")
-        st.markdown("### 📄 Downloads")
-        pdf_path = st.session_state['latest_pdf_generated']
-        with open(pdf_path, "rb") as file:
-            st.download_button(
-                label="📥 Download Compliance Report (PDF)",
-                data=file,
-                file_name="USMCA_Customs_Compliance_Report.pdf",
-                mime="application/pdf",
-                key="sidebar_pdf_download"
-            )
-
-st.title("📦 USMCA / T-MEC Autonomous Customs Agent")
-st.caption("AI-Powered Compliance Engine, Cross-Border Duty Calculator, and PDF Audit Automation")
+st.title("📦 USMCA / T-MEC Autonomous Customs Desk")
+st.caption("AI-Powered Compliance Engine and Cross-Border Duty Calculator")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render chat history with embedded download buttons if a message spawned a PDF
-for idx, msg in enumerate(st.session_state.messages):
+# Render chat history
+for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if msg.get("pdf_path") and os.path.exists(msg["pdf_path"]):
-            with open(msg["pdf_path"], "rb") as file:
-                st.download_button(
-                    label="📄 Download USMCA Report (PDF)",
-                    data=file,
-                    file_name="USMCA_Customs_Compliance_Report.pdf",
-                    mime="application/pdf",
-                    key=f"hist_pdf_download_{idx}"
-                )
 
 # Chat Input Loop
-if prompt := st.chat_input("Enter shipment details, calculate cross-border duties, or request a PDF compliance report..."):
+if prompt := st.chat_input("Enter shipment details, calculate cross-border duties, or inquire about rules of origin..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -276,21 +206,22 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
             agent = get_trade_agent()
             
             with st.status("Evaluating trade regulations and executing agent tools...", expanded=True) as status:
+                start_time = time.time()
                 response = agent.invoke({"messages": [("user", prompt)]})
                 
-                # Render tool calls visually in status container
                 for message in response["messages"]:
                     if hasattr(message, 'tool_calls') and message.tool_calls:
                         for tool_call in message.tool_calls:
                             st.write(f"🛠️ **Executing Tool:** `{tool_call['name']}`")
                             st.json(tool_call['args'])
                     elif message.type == "tool":
-                        st.write("👁️ **Tool Output Observation:**")
+                        st.write("👁️ **Tool Observation:**")
                         st.caption(str(message.content)[:300] + "...")
 
-                status.update(label="Analysis and tool execution complete", state="complete", expanded=False)
+                elapsed = time.time() - start_time
+                status.update(label=f"Done in {elapsed:.2f}s", state="complete", expanded=False)
 
-            # Robust response parsing for multi-step ReAct output
+            # Extract narrative answer from the response
             final_answer = ""
             for msg in reversed(response["messages"]):
                 if msg.type == "ai":
@@ -306,30 +237,10 @@ if prompt := st.chat_input("Enter shipment details, calculate cross-border dutie
 
             if not final_answer:
                 tool_outputs = [str(m.content) for m in response["messages"] if m.type == "tool"]
-                final_answer = "### 📝 Execution Summary:\n\n" + "\n\n".join(tool_outputs) if tool_outputs else "USMCA trade analysis completed."
+                final_answer = "### 📝 Execution Summary:\n\n" + "\n\n".join(tool_outputs) if tool_outputs else "USMCA trade assessment complete."
 
             st.markdown(final_answer)
-
-            # Render Download Button immediately in current response turn
-            generated_pdf = st.session_state.get('latest_pdf_generated')
-            has_pdf = generated_pdf and os.path.exists(generated_pdf)
-            
-            if has_pdf:
-                with open(generated_pdf, "rb") as file:
-                    st.download_button(
-                        label="📄 Download USMCA Compliance Report (PDF)",
-                        data=file,
-                        file_name="USMCA_Customs_Compliance_Report.pdf",
-                        mime="application/pdf",
-                        key=f"turn_pdf_download_{len(st.session_state.messages)}"
-                    )
-
-            # Append to history with pdf reference
-            st.session_state.messages.append({
-                "role": "assistant", 
-                "content": final_answer,
-                "pdf_path": generated_pdf if has_pdf else None
-            })
+            st.session_state.messages.append({"role": "assistant", "content": final_answer})
 
         except Exception as e:
             st.error(f"Execution Error: {str(e)}")
