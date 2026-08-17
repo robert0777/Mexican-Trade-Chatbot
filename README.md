@@ -1,46 +1,40 @@
 # 📦 Mexican Customs & Trade SME Chatbot
 
-A **RAG-powered conversational assistant** developed to assist importers, exporters, and customs brokers navigating the **US-Mexico** trade corridor. 
+A **RAG-powered conversational assistant** built with Streamlit and NVIDIA NIMs to assist importers, exporters, and customs brokers navigating the **US-Mexico** trade corridor.
 
-This system operates as a specialized **technical advisor**: it queries official Mexican and US trade legislation (*LIGIE/HTS, T-MEC/USMCA, Ley Aduanera, CFF*) using a semantic vector search engine (FAISS), retrieves precise legal foundations, and generates structured compliance reports and technical dictamens.
-
----
-
-## 💡 How Semantic Retrieval Works (FAISS)
-
-To deliver precise legal grounding, the system utilizes **FAISS** (Facebook AI Similarity Search), an open-source vector search library developed by Meta:
-
-* **Vector Search Engine**: Documents are converted into high-dimensional vector embeddings using NVIDIA Embeddings (`NV-Embed-QA`). FAISS calculates the mathematical distance (e.g., Cosine Similarity / Euclidean Distance) between the user's query vector and all legal document vectors.
-* **High Efficiency Retrieval**: Rather than scanning dense PDF files line-by-line, FAISS uses optimized indexing algorithms to retrieve the top $k$ most relevant legal excerpts in milliseconds.
+This system operates as a specialized **technical advisor**: it ingests official trade legislation (*Ley Aduanera, T-MEC/USMCA, CFF*) from local PDF files, retrieves the most relevant legal context based on dynamic token optimization and keyword relevance, and generates structured compliance reports with RAID matrices using NVIDIA's `llama-3.3-nemotron-super-49b-v1.5` model.
 
 ---
 
 ## 🌟 Key Features
 
-* **Semantic Legal Grounding (RAG)**: Ingests official trade laws, tariff schedules, and regulatory manuals (*Ley Aduanera, CFF, Anexo 22, USMCA/T-MEC*) from `./pdf_files_comercio_exterior` and indexes them with **FAISS** and **NVIDIA Embeddings** for context-aware retrieval.
-* **LLM Expert Core**: Powered by **NVIDIA NIMs** (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) via `langchain-nvidia-ai-endpoints` to synthesize expert trade opinions and legal citations.
-* **Risk & Compliance Reporting**: Generates technical trade opinions finalized with a **RAID (Risks, Actions, Issues, Decisions)** matrix table and explicit legal disclaimers.
-* **PDF Export Utility**: Compiles generated technical dictamens into downloadable PDF reports instantly using **ReportLab**.
-* **Interactive UI**: Streamlined **Streamlit** interface featuring document indexing, query handling, and regulatory excerpt inspection.
+* **Dynamic In-Memory RAG Pipeline**: Ingests and normalizes trade documentation from `./pdf_files_comercio_exterior` using `PyPDFDirectoryLoader`, splitting text adaptively with `RecursiveCharacterTextSplitter` based on target token counts.
+* **Smart Chunk Selection**: Scores document relevance dynamically using keyword overlap and length-scaling metrics, fitting context seamlessly within model token constraints via `tiktoken`.
+* **LLM Expert Core**: Integrates directly with **NVIDIA NIMs** (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) via the `openai` SDK to deliver technical trade opinions, citations, and compliance reports.
+* **Risk & Compliance Focus**: Outputs detailed legal analyses complete with tax metric breakdowns (IGE, IVA, DTA), normative citations, and a mandatory **RAID (Risks, Actions, Issues, Decisions)** matrix table.
+* **Contextual Greeting Handler**: Normalizes user input and handles time-based greetings in Spanish without needlessly burning model context.
+* **Interactive UI**: Streamlined **Streamlit** wide-layout application with an interactive sidebar, custom link navigation, document indexing trigger, and expandable source verification panels.
 
 ---
 
 ## 🛠️ Architecture & Tech Stack
 
 * **Framework & UI**: [Streamlit](https://streamlit.io/)
-* **LLM Core & Embeddings**: NVIDIA NIMs (`nvidia/llama-3.3-nemotron-super-49b-v1.5`, `NV-Embed-QA`) via `langchain-nvidia-ai-endpoints`
-* **Vector Search & RAG**: `FAISS`, `PyPDFDirectoryLoader`, `RecursiveCharacterTextSplitter`, `tiktoken`
-* **Report Generation**: [ReportLab](https://www.reportlab.com/)
+* **LLM Core**: **NVIDIA NIMs** (`nvidia/llama-3.3-nemotron-super-49b-v1.5`) accessed through the standard `openai` Python SDK (`OpenAI` client)
+* **Document Processing**: `PyPDFDirectoryLoader`, `RecursiveCharacterTextSplitter` (LangChain Community & Text Splitters)
+* **Tokenizer & Utilities**: `tiktoken` (for token length counting), `python-dotenv`
 
 ---
 
-## 📂 Project Structure
+## 🚀 Getting Started
 
-```text
-mexican-customs-trade-sme-chatbot/
-│
-├── app.py                         # Main Streamlit application and RAG chatbot logic
-├── requirements.txt               # Python dependencies
-├── README.md                      # Project documentation
-├── .env                           # Template for environment variables
-└── pdf_files_comercio_exterior/   # Local directory for reference PDFs (Ley Aduanera, T-MEC, CFF, HTS)
+### 1. Prerequisites
+
+Make sure you have Python 3.10+ installed and an active NVIDIA NIM API Key.
+
+### 2. Environment Setup
+
+Create a `.env` file in the project root directory:
+
+```env
+NVIDIA_API_KEY=your_nvidia_api_key_here
