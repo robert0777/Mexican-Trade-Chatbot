@@ -198,28 +198,25 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
     st.markdown("### 👤 Author")
     st.markdown("**Dr. Robert Hernández Martínez**")
+
+
     
     # Contact Links
-    st.markdown("""
-        <a href="https://chomchom216.medium.com/" class="sidebar-link">
-            📝 Articles on Medium
-        </a>
-        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">
-            🎓 Academic Publications
-        </a>
-        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">
-            🏆 Credentials
-
-        </a>
-        <a href="https://github.com/robert0777" class="sidebar-link">
-        🐙 GitHub
-        </a>
-        
-        <a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">
-            📧 Contact
-        </a>
-    """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+   
+    st.markdown(
+    """
+    <div class="sidebar-link-container">
+        <div><a href="https://chomchom216.medium.com/" class="sidebar-link">📝 Articles on Medium</a></div>
+        <div><a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">🎓 Academic Publications</a></div>
+        <div><a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">🏆 Credentials</a></div>
+        <div><a href="https://github.com/robert0777" class="sidebar-link">🐙 GitHub</a></div>
+        <div><a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">📧 Contact</a></div>
+    </div>
+""",
+    unsafe_allow_html=True,
+)
+    
+    
     
     # Footer
     st.markdown("""
@@ -227,12 +224,6 @@ with st.sidebar:
             © 2026 Asistente AI Especializado en Legislación Aduanera y T-MEC
         </div>
     """, unsafe_allow_html=True)
-
-
-
-
-
-
 
 
 
