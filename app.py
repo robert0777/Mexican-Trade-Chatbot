@@ -182,6 +182,54 @@ with st.sidebar:
     st.markdown("### 👤 Autor")
     st.markdown("**Dr. Robert Hernández Martínez**")
 
+
+    
+    # Contact Links
+    st.markdown("""
+        <a href="https://chomchom216.medium.com/" class="sidebar-link">
+            📝 Articles on Medium
+        </a>
+        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">
+            🎓 Academic Publications
+        </a>
+        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">
+            🏆 Credentials
+
+        </a>
+        <a href="https://github.com/robert0777" class="sidebar-link">
+        🐙 GitHub
+        </a>
+        
+        <a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">
+            📧 Contact
+        </a>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Footer
+    st.markdown("""
+        <div style="position: fixed; bottom: 0; padding: 1rem; text-align: center; font-size: 0.8rem; color: #6B7280;">
+            © 2026 Asistente AI Especializado en Legislación Aduanera y T-MEC
+        </div>
+    """, unsafe_allow_html=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Client Initialization
 try:
     nvidia_client = OpenAI(
