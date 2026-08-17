@@ -174,15 +174,30 @@ st.set_page_config(layout="wide", page_title="Asesor AI de Comercio Exterior y A
 st.header("Asistente AI Especializado en Legislación Aduanera y T-MEC")
 st.markdown("Sistema de consulta para importadores, exportadores y agentes aduanales sobre la normativa del corredor US-MX.")
 
-# Sidebar Configuration
+
+
+
+
+# Sidebar content
 with st.sidebar:
-    st.markdown("### 📖 Sobre la Aplicación")
+    # App Logo and Title
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.image("ai-advisor-icon.svg", width=50)
+    with col2:
+        st.markdown('<p class="sidebar-app-name">AI Chatbot Asesor de Normativa Aduanera Mexicana</p>', unsafe_allow_html=True)
+    
+    
+    # About Section
+    st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+    st.markdown("### 📖 About this App")
     st.write("Analizador automatizado de normativa aduanera mexicana, Reglas Generales de Comercio Exterior y T-MEC.")
-    st.markdown("---")
-    st.markdown("### 👤 Autor")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Author Section
+    st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+    st.markdown("### 👤 Author")
     st.markdown("**Dr. Robert Hernández Martínez**")
-
-
     
     # Contact Links
     st.markdown("""
@@ -212,8 +227,6 @@ with st.sidebar:
             © 2026 Asistente AI Especializado en Legislación Aduanera y T-MEC
         </div>
     """, unsafe_allow_html=True)
-
-
 
 
 
