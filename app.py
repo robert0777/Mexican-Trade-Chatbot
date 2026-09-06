@@ -90,6 +90,17 @@ def get_pdf_files(directory=DATA_DIR):
 
 def normalize_trade_text(text):
     text = re.sub(r'\s+', ' ', text)
+    # Domain-specific legal abbreviations expansion
+    replacements = {
+        'Art.': 'Artículo',
+        'Arts.': 'Artículos',
+        'Fracc.': 'Fracción',
+        'Num.': 'Numeral',
+        'L.A.': 'Ley Aduanera',
+        'CFF': 'Código Fiscal de la Federación'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
     return text.strip()
 
 def load_documents():
@@ -128,7 +139,6 @@ def calculate_chunk_relevance(chunk, question):
     length_factor = 1 / (len(chunk.page_content.split()) + 1)
     return word_overlap * (1 - length_factor)
 
-# Aligned with reference max token window
 def select_relevant_chunks(question, chunks, max_total_tokens=3500):
     prompt_tokens = count_tokens(question) + 500
     available_tokens = max_total_tokens - prompt_tokens
@@ -154,7 +164,8 @@ def select_relevant_chunks(question, chunks, max_total_tokens=3500):
             
     return selected_chunks
 
-def truncate_context(context, max_tokens=3500):
+# Aligned ceiling to 6000 to prevent premature truncation of formatted prompt headers
+def truncate_context(context, max_tokens=6000):
     tokens = count_tokens(context)
     if tokens > max_tokens:
         lines = context.split('\n')
@@ -172,8 +183,43 @@ def truncate_context(context, max_tokens=3500):
 
 # UI Setup
 st.set_page_config(layout="wide", page_title="Asesor AI de Comercio Exterior y Aduanas", page_icon="🌐")
+st.image("ai-advisor-icon.svg", width=100)
 st.header("Asistente AI Especializado en Legislación Aduanera y T-MEC")
 st.markdown("Sistema de consulta para importadores, exportadores y agentes aduanales sobre la normativa del corredor US-MX.")
+
+# Injected custom CSS rules matching reference script
+st.markdown("""
+<style>
+    .sidebar .sidebar-content {
+        background-color: white;
+    }
+    
+    .sidebar-app-name {
+        font-size: 1.2rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: #1F2937;
+    }
+    
+    .sidebar-section {
+        padding: 1rem 0;
+        border-bottom: 1px solid #E5E7EB;
+    }
+    
+    .sidebar-link {
+        display: flex;
+        align-items: center;
+        color: #4B5563;
+        text-decoration: none;
+        padding: 0.5rem 0;
+        transition: color 0.2s;
+    }
+    
+    .sidebar-link:hover {
+        color: #2563EB;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Sidebar content
 with st.sidebar:
@@ -192,18 +238,24 @@ with st.sidebar:
     st.markdown("### 👤 Author")
     st.markdown("**Dr. Robert Hernández Martínez**")
 
-    st.markdown(
-    """
-    <div class="sidebar-link-container">
-        <div><a href="https://chomchom216.medium.com/" class="sidebar-link">📝 Articles on Medium</a></div>
-        <div><a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">🎓 Academic Publications</a></div>
-        <div><a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">🏆 Credentials</a></div>
-        <div><a href="https://github.com/robert0777" class="sidebar-link">🐙 GitHub</a></div>
-        <div><a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">📧 Contact</a></div>
-    </div>
-""",
-    unsafe_allow_html=True,
-)
+    st.markdown("""
+        <a href="https://chomchom216.medium.com/" class="sidebar-link">
+            📝 Articles on Medium
+        </a>
+        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">
+            🎓 Academic Publications
+        </a>
+        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">
+            🏆 Credentials
+        </a>
+        <a href="https://github.com/robert0777" class="sidebar-link">
+            🐙 GitHub
+        </a>
+        <a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">
+            📧 Contact
+        </a>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("""
         <div style="position: fixed; bottom: 0; padding: 1rem; text-align: center; font-size: 0.8rem; color: #6B7280;">
@@ -211,7 +263,7 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-# OpenRouter client initialization matching reference script
+# OpenRouter client initialization
 try:
     openrouter_client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
@@ -347,3 +399,20 @@ if prompt1:
             st.warning("⚠️ Por favor, primero cargue los documentos usando el botón 'Click aquí para Cargar y Procesar Documentos en el Sistema'")
     elif not is_greeting:
         st.warning("Por favor, formule una pregunta específica sobre legislación aduanera o T-MEC.")
+
+# Footer
+st.markdown("""
+<style>
+footer {visibility: hidden;}
+div.custom-footer {
+    text-align: center;
+    padding: 10px;
+    font-size: 14px;
+    color: gray;
+    margin-top: 50px;
+}
+</style>
+<div class="custom-footer">
+    Developed by Dr. Robert Hernández Martínez    |    robert@actuariayfinanzas.net    |    © 2026
+</div>
+""", unsafe_allow_html=True)
