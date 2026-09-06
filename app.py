@@ -255,6 +255,35 @@ except Exception as e:
 
 
 
+
+def generate_completion_with_fallback(client, models_list, messages, temperature=0.3, max_tokens=3000):
+    last_error = None
+    for model in models_list:
+        try:
+            response_stream = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,  # Set streaming to True
+                extra_headers={
+                    "HTTP-Referer": "http://localhost:8501",
+                    "X-Title": "Trade Compliance Advisor"
+                }
+            )
+            return response_stream, model
+        except Exception as err:
+            last_error = err
+            continue
+            
+    raise RuntimeError(f"Todos los modelos fallaron. Último error: {str(last_error)}")
+
+
+
+
+
+
+
 TRADE_SYSTEM_PROMPT = """Eres un experto asesor en materia de comercio exterior y legislación aduanera mexicana."""
 
 TRADE_USER_TEMPLATE = """Basado en la consulta específica sobre "{question}", analiza cuidadosamente 
@@ -293,6 +322,13 @@ if st.button("Click aquí para Cargar y Procesar Documentos en el Sistema"):
         except Exception as e:
             st.error(f"Error al cargar los documentos: {str(e)}")
 
+
+
+
+
+
+
+
 if prompt1:
     is_greeting, greeting_response, actual_question = st.session_state.greeting_handler.process_input(prompt1)
     
@@ -322,48 +358,32 @@ if prompt1:
                         context_parts.append(doc_section)
                     
                     context = truncate_context("\n\n".join(context_parts))
-                    
-                    report_content = None
-                    last_exception = None
 
-                    # Iterate over free model fallbacks to find an active model
-                    for model_candidate in FREE_MODELS:
-                        try:
-                            completion = openrouter_client.chat.completions.create(
-                                model=model_candidate,
-                                messages=[
-                                    {"role": "system", "content": TRADE_SYSTEM_PROMPT},
-                                    {
-                                        "role": "user",
-                                        "content": TRADE_USER_TEMPLATE.format(
-                                            context=context,
-                                            question=query_to_process
-                                        )
-                                    }
-                                ],
-                                temperature=0.3,
-                                top_p=0.9,
-                                max_tokens=3000,
-                                stream=False,
-                                extra_headers={
-                                    "HTTP-Referer": "http://localhost:8501",
-                                    "X-Title": "Trade Compliance Advisor"
-                                }
+                    messages_payload = [
+                        {"role": "system", "content": TRADE_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": TRADE_USER_TEMPLATE.format(
+                                context=context,
+                                question=query_to_process
                             )
-                            
-                            response_text = completion.choices[0].message.content
-                            if response_text and response_text.strip():
-                                report_content = response_text
-                                break
-                        except Exception as e:
-                            last_exception = e
-                            continue
+                        }
+                    ]
+
+                    # Execute streaming request with model fallback
+                    response_stream, used_model = generate_completion_with_fallback(
+                        openrouter_client,
+                        FREE_MODELS,
+                        messages_payload,
+                        temperature=0.3,
+                        max_tokens=3000
+                    )
 
                     st.subheader("📋 Reporte Técnico de Cumplimiento")
-                    if report_content:
-                        st.markdown(report_content)
-                    else:
-                        st.error(f"Error al obtener respuesta de la API: {str(last_exception) if last_exception else 'Sin respuesta válida de los modelos gratuitos.'}")
+                    
+                    # Display active model name and stream response
+                    st.write(f"📝 Respuesta *(Modelo activo: `{used_model}`)*:")
+                    st.write_stream(response_stream)
                         
                     st.info(f"⏱️ Tiempo de procesamiento: {time.process_time() - start:.2f} segundos")
                     
@@ -378,6 +398,17 @@ if prompt1:
                 st.error(f"Error durante el procesamiento: {str(e)}")
         else:
             st.warning("⚠️ Por favor, primero cargue los documentos usando el botón 'Click aquí para Cargar y Procesar Documentos en el Sistema'")
+
+
+
+
+
+
+
+
+
+
+
 
 # Footer
 st.markdown("""
