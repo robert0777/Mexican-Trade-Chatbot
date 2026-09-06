@@ -13,7 +13,7 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 # Target Directory for Trade PDFs
 DATA_DIR = "./pdf_files_comercio_exterior"
@@ -103,7 +103,7 @@ def load_documents():
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             length_function=count_tokens,
-            separators=["\n\n", "\n", ".", "!", "?", ";", ":", " ", ""]
+            separators=["\n\n", "\n", ".", "!", "?", "¡", "¿", ";", ":", " ", ""]
         )
         
         loader = PyPDFDirectoryLoader(
@@ -128,7 +128,8 @@ def calculate_chunk_relevance(chunk, question):
     length_factor = 1 / (len(chunk.page_content.split()) + 1)
     return word_overlap * (1 - length_factor)
 
-def select_relevant_chunks(question, chunks, max_total_tokens=6000):
+# Aligned with reference max token window
+def select_relevant_chunks(question, chunks, max_total_tokens=3500):
     prompt_tokens = count_tokens(question) + 500
     available_tokens = max_total_tokens - prompt_tokens
     
@@ -153,7 +154,7 @@ def select_relevant_chunks(question, chunks, max_total_tokens=6000):
             
     return selected_chunks
 
-def truncate_context(context, max_tokens=6000):
+def truncate_context(context, max_tokens=3500):
     tokens = count_tokens(context)
     if tokens > max_tokens:
         lines = context.split('\n')
@@ -210,27 +211,44 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-# Client Initialization via OpenRouter
+# OpenRouter client initialization matching reference script
 try:
     openrouter_client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY")
     )
-    # Default to openrouter/auto or meta-llama/llama-3.3-70b-instruct:free
-    MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME", "meta-llama/llama-3.3-70b-instruct:free")
+    
+    MODEL_NAME = "openrouter/auto"
+    
+    # Connection test
+    test_response = openrouter_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": "Eres un asistente experto en comercio exterior."},
+            {"role": "user", "content": "test connection"}
+        ],
+        max_tokens=20,
+        stream=False
+    )
 except Exception as e:
-    st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
+    st.error(f"""Error al inicializar el cliente de OpenRouter: {str(e)}
+             Acciones requeridas:
+             1. Verifique la clave OPENROUTER_API_KEY en el archivo .env
+             2. Verifique su conexión a internet""")
     st.stop()
 
 # System Prompt specialized in Trade
-TRADE_SYSTEM_PROMPT = """Eres un Asistente Experto (SME) en Comercio Exterior y Legislación Aduanera Mexicana/EE.UU.
-Tu objetivo es ayudar a importadores, exportadores y agentes aduanales a realizar análisis de cumplimiento."""
+TRADE_SYSTEM_PROMPT = """Eres un experto asesor en materia de comercio exterior y legislación aduanera mexicana."""
 
-TRADE_USER_TEMPLATE = """Instrucciones de Respuesta:
-1. Analiza exhaustivamente la consulta usando únicamente los fragmentos proporcionados.
-2. Presenta todas las cifras, tasas tributarias (IGE, IVA, DTA), valoraciones y métricas en sus formatos correspondientes (USD, MXN, %, etc.).
-3. Incluye referencias normativas específicas para cada afirmación (artículos de Ley Aduanera, Anexo 22, CFF, Capítulos T-MEC, etc.).
-4. Ofrece una opinión técnica sustentada y agrega un aviso de exención de responsabilidad (Disclaimer) al inicio o final.
+TRADE_USER_TEMPLATE = """Basado en la consulta específica sobre "{question}", analiza cuidadosamente 
+los siguientes extractos de documentos oficiales de comercio exterior y T-MEC
+para proporcionar un informe técnico de cumplimiento.
+
+Instrucciones específicas:
+1. Utiliza información de TODOS los documentos relevantes proporcionados.
+2. Presenta cifras, tasas tributarias (IGE, IVA, DTA), valoraciones y métricas.
+3. Incluye referencias normativas específicas (artículos de Ley Aduanera, Anexo 22, CFF, Capítulos T-MEC).
+4. Ofrece una opinión técnica sustentada y agrega un aviso de exención de responsabilidad (Disclaimer).
 5. Finaliza OBLIGATORIAMENTE con una tabla RAID (Risks, Actions, Issues, Decisions) formateada en Markdown.
 
 Extractos Normativos Disponibles:
@@ -248,13 +266,13 @@ prompt1 = st.text_input(
     placeholder="Ej: ¿Cuáles son las reglas de origen aplicables bajo el T-MEC para el sector automotriz?"
 )
 
-if st.button("Cargar y Procesar Documentos Aduaneros"):
-    with st.spinner('Cargando expediente de normativa en pdf_files_comercio_exterior...'):
+if st.button("Click aquí para Cargar y Procesar Documentos en el Sistema"):
+    with st.spinner('Cargando y procesando todos los documentos PDF...'):
         try:
             start_time = time.process_time()
             load_documents()
             processing_time = time.process_time() - start_time
-            st.success(f"📚 Expediente cargado exitosamente en {processing_time:.2f} segundos.")
+            st.success(f"📚 Todos los documentos han sido cargados correctamente en {processing_time:.2f} segundos. ¡Ahora puede hacer sus preguntas!")
         except Exception as e:
             st.error(f"Error al cargar los documentos: {str(e)}")
 
@@ -267,7 +285,7 @@ if prompt1:
     if actual_question:
         if "documents" in st.session_state:
             try:
-                with st.spinner('Generando reporte de cumplimiento aduanero...'):
+                with st.spinner('Analizando documentos...'):
                     start = time.process_time()
                     selected_chunks = select_relevant_chunks(actual_question, st.session_state.documents)
                     
@@ -280,11 +298,12 @@ if prompt1:
                     
                     context_parts = []
                     for doc_name, contents in docs_used.items():
-                        context_parts.append(f"[Documento Legal: {doc_name}]\n" + "\n".join(contents))
+                        joined_contents = "\n".join(contents)
+                        doc_section = f"[Documento Legal: {doc_name}]\n{joined_contents}"
+                        context_parts.append(doc_section)
                     
                     context = truncate_context("\n\n".join(context_parts))
                     
-                    # Streaming completion via OpenRouter
                     response_stream = openrouter_client.chat.completions.create(
                         model=MODEL_NAME,
                         messages=[
@@ -297,9 +316,9 @@ if prompt1:
                                 )
                             }
                         ],
-                        temperature=0.3,
-                        top_p=0.95,
-                        max_tokens=4000,
+                        temperature=0.4,
+                        top_p=0.9,
+                        max_tokens=1500,
                         stream=True,
                         extra_headers={
                             "HTTP-Referer": "http://localhost:8501",
@@ -311,12 +330,20 @@ if prompt1:
                     st.write_stream(response_stream)
                     st.info(f"⏱️ Tiempo de procesamiento: {time.process_time() - start:.2f} segundos")
                     
-                    with st.expander("Ver Fuentes Consultadas"):
-                        for doc_name, doc_chunks in docs_used.items():
-                            st.write(f"**{doc_name}**")
-                            for chunk in doc_chunks:
-                                st.caption(chunk)
+                    st.write("\n📚 Documentos consultados:")
+                    for doc_name, doc_chunks in docs_used.items():
+                        with st.expander(f"Extractos de {doc_name}"):
+                            for i, chunk in enumerate(doc_chunks, 1):
+                                st.write(f"Extracto {i}:")
+                                st.write(chunk)
+                                st.markdown("---")
             except Exception as e:
-                st.error(f"Error en la consulta: {str(e)}")
+                st.error(f"""Error durante el procesamiento: {str(e)}
+                         Posibles soluciones:
+                         1. Verifique su conexión a internet
+                         2. Confirme la validez de su clave OPENROUTER_API_KEY en el archivo .env
+                         3. Pruebe con una consulta más corta o vuelva a intentar si el modelo gratuito está saturado""")
         else:
-            st.warning("⚠️ Por favor cargue los documentos antes de realizar la consulta.")
+            st.warning("⚠️ Por favor, primero cargue los documentos usando el botón 'Click aquí para Cargar y Procesar Documentos en el Sistema'")
+    elif not is_greeting:
+        st.warning("Por favor, formule una pregunta específica sobre legislación aduanera o T-MEC.")
