@@ -12,7 +12,7 @@ from openai import OpenAI
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Load environment variables
+# Load environment variables explicitly
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
@@ -256,7 +256,6 @@ try:
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key
     )
-    
     MODEL_NAME = "openrouter/auto"
 except Exception as e:
     st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
@@ -330,7 +329,7 @@ if prompt1:
                     
                     context = truncate_context("\n\n".join(context_parts))
                     
-                    # Direct static completion call to ensure output reliability
+                    # Llamada estática directa a la API (Evita problemas de streaming)
                     completion = openrouter_client.chat.completions.create(
                         model=MODEL_NAME,
                         messages=[
@@ -353,8 +352,14 @@ if prompt1:
                         }
                     )
                     
+                    report_content = completion.choices[0].message.content
+                    
                     st.subheader("📋 Reporte Técnico de Cumplimiento")
-                    st.markdown(completion.choices[0].message.content)
+                    if report_content:
+                        st.markdown(report_content)
+                    else:
+                        st.warning("El modelo devolvió una respuesta vacía. Por favor intente formular la consulta nuevamente.")
+                        
                     st.info(f"⏱️ Tiempo de procesamiento: {time.process_time() - start:.2f} segundos")
                     
                     st.write("\n📚 Documentos consultados:")
