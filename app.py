@@ -16,7 +16,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
-# Target Directory for Trade PDFs
 DATA_DIR = "./pdf_files_comercio_exterior"
 
 class GreetingHandler:
@@ -139,7 +138,7 @@ def calculate_chunk_relevance(chunk, question):
     length_factor = 1 / (len(chunk.page_content.split()) + 1)
     return word_overlap * (1 - length_factor)
 
-def select_relevant_chunks(question, chunks, max_total_tokens=3500):
+def select_relevant_chunks(question, chunks, max_total_tokens=5000):
     prompt_tokens = count_tokens(question) + 500
     available_tokens = max_total_tokens - prompt_tokens
     
@@ -164,7 +163,7 @@ def select_relevant_chunks(question, chunks, max_total_tokens=3500):
             
     return selected_chunks
 
-def truncate_context(context, max_tokens=6000):
+def truncate_context(context, max_tokens=5000):
     tokens = count_tokens(context)
     if tokens > max_tokens:
         lines = context.split('\n')
@@ -188,30 +187,11 @@ st.markdown("Sistema de consulta para importadores, exportadores y agentes aduan
 
 st.markdown("""
 <style>
-    .sidebar .sidebar-content {
-        background-color: white;
-    }
-    .sidebar-app-name {
-        font-size: 1.2rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
-        color: #1F2937;
-    }
-    .sidebar-section {
-        padding: 1rem 0;
-        border-bottom: 1px solid #E5E7EB;
-    }
-    .sidebar-link {
-        display: flex;
-        align-items: center;
-        color: #4B5563;
-        text-decoration: none;
-        padding: 0.5rem 0;
-        transition: color 0.2s;
-    }
-    .sidebar-link:hover {
-        color: #2563EB;
-    }
+    .sidebar .sidebar-content { background-color: white; }
+    .sidebar-app-name { font-size: 1.2rem; font-weight: 600; margin-bottom: 1rem; color: #1F2937; }
+    .sidebar-section { padding: 1rem 0; border-bottom: 1px solid #E5E7EB; }
+    .sidebar-link { display: flex; align-items: center; color: #4B5563; text-decoration: none; padding: 0.5rem 0; transition: color 0.2s; }
+    .sidebar-link:hover { color: #2563EB; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -246,17 +226,23 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-api_key = os.getenv("OPENROUTER_API_KEY")
-if not api_key:
+openrouter_key = os.getenv("OPENROUTER_API_KEY")
+
+if not openrouter_key:
     st.error("⚠️ OPENROUTER_API_KEY no encontrada en las variables de entorno.")
     st.stop()
 
 try:
     openrouter_client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=api_key
+        api_key=openrouter_key
     )
-    MODEL_NAME = "openrouter/auto"
+    # Non-Llama free tier models on OpenRouter
+    FREE_MODELS = [
+        "google/gemini-2.0-flash-exp:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "openrouter/auto"
+    ]
 except Exception as e:
     st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
     st.stop()
@@ -329,36 +315,47 @@ if prompt1:
                     
                     context = truncate_context("\n\n".join(context_parts))
                     
-                    # Llamada estática directa a la API (Evita problemas de streaming)
-                    completion = openrouter_client.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": TRADE_SYSTEM_PROMPT},
-                            {
-                                "role": "user",
-                                "content": TRADE_USER_TEMPLATE.format(
-                                    context=context,
-                                    question=query_to_process
-                                )
-                            }
-                        ],
-                        temperature=0.4,
-                        top_p=0.9,
-                        max_tokens=2000,
-                        stream=False,
-                        extra_headers={
-                            "HTTP-Referer": "http://localhost:8501",
-                            "X-Title": "Trade Compliance Advisor"
-                        }
-                    )
-                    
-                    report_content = completion.choices[0].message.content
-                    
+                    report_content = None
+                    last_exception = None
+
+                    # Iterate over free model fallbacks to find an active model
+                    for model_candidate in FREE_MODELS:
+                        try:
+                            completion = openrouter_client.chat.completions.create(
+                                model=model_candidate,
+                                messages=[
+                                    {"role": "system", "content": TRADE_SYSTEM_PROMPT},
+                                    {
+                                        "role": "user",
+                                        "content": TRADE_USER_TEMPLATE.format(
+                                            context=context,
+                                            question=query_to_process
+                                        )
+                                    }
+                                ],
+                                temperature=0.3,
+                                top_p=0.9,
+                                max_tokens=3000,
+                                stream=False,
+                                extra_headers={
+                                    "HTTP-Referer": "http://localhost:8501",
+                                    "X-Title": "Trade Compliance Advisor"
+                                }
+                            )
+                            
+                            response_text = completion.choices[0].message.content
+                            if response_text and response_text.strip():
+                                report_content = response_text
+                                break
+                        except Exception as e:
+                            last_exception = e
+                            continue
+
                     st.subheader("📋 Reporte Técnico de Cumplimiento")
                     if report_content:
                         st.markdown(report_content)
                     else:
-                        st.warning("El modelo devolvió una respuesta vacía. Por favor intente formular la consulta nuevamente.")
+                        st.error(f"Error al obtener respuesta de la API: {str(last_exception) if last_exception else 'Sin respuesta válida de los modelos gratuitos.'}")
                         
                     st.info(f"⏱️ Tiempo de procesamiento: {time.process_time() - start:.2f} segundos")
                     
@@ -370,11 +367,7 @@ if prompt1:
                                 st.write(chunk)
                                 st.markdown("---")
             except Exception as e:
-                st.error(f"""Error durante el procesamiento: {str(e)}
-                         Posibles soluciones:
-                         1. Verifique su conexión a internet
-                         2. Confirme la validez de su clave OPENROUTER_API_KEY en el archivo .env
-                         3. Pruebe con una consulta más corta o vuelva a intentar si el modelo gratuito está saturado""")
+                st.error(f"Error durante el procesamiento: {str(e)}")
         else:
             st.warning("⚠️ Por favor, primero cargue los documentos usando el botón 'Click aquí para Cargar y Procesar Documentos en el Sistema'")
 
