@@ -226,6 +226,9 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
+
+
+# OpenRouter Client Setup
 openrouter_key = os.getenv("OPENROUTER_API_KEY")
 
 if not openrouter_key:
@@ -237,15 +240,20 @@ try:
         base_url="https://openrouter.ai/api/v1",
         api_key=openrouter_key
     )
-    # Non-Llama free tier models on OpenRouter
+    # Target active free endpoints from OpenRouter
     FREE_MODELS = [
-        "google/gemini-2.0-flash-exp:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-        "openrouter/auto"
+        "minimax/minimax-m3:free",
+        "google/gemma-4-31b:free",
+        "cohere/north-mini-code:free",
+        "openrouter/free-models-router"
     ]
 except Exception as e:
     st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
     st.stop()
+
+
+
+
 
 TRADE_SYSTEM_PROMPT = """Eres un experto asesor en materia de comercio exterior y legislación aduanera mexicana."""
 
