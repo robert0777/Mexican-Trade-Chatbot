@@ -13,7 +13,8 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Load environment variables
-load_dotenv(override=True)
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
 
 # Target Directory for Trade PDFs
 DATA_DIR = "./pdf_files_comercio_exterior"
@@ -90,7 +91,6 @@ def get_pdf_files(directory=DATA_DIR):
 
 def normalize_trade_text(text):
     text = re.sub(r'\s+', ' ', text)
-    # Domain-specific legal abbreviations expansion
     replacements = {
         'Art.': 'Artículo',
         'Arts.': 'Artículos',
@@ -164,7 +164,6 @@ def select_relevant_chunks(question, chunks, max_total_tokens=3500):
             
     return selected_chunks
 
-# Aligned ceiling to 6000 to prevent premature truncation of formatted prompt headers
 def truncate_context(context, max_tokens=6000):
     tokens = count_tokens(context)
     if tokens > max_tokens:
@@ -187,25 +186,21 @@ st.image("ai-advisor-icon.svg", width=100)
 st.header("Asistente AI Especializado en Legislación Aduanera y T-MEC")
 st.markdown("Sistema de consulta para importadores, exportadores y agentes aduanales sobre la normativa del corredor US-MX.")
 
-# Injected custom CSS rules matching reference script
 st.markdown("""
 <style>
     .sidebar .sidebar-content {
         background-color: white;
     }
-    
     .sidebar-app-name {
         font-size: 1.2rem;
         font-weight: 600;
         margin-bottom: 1rem;
         color: #1F2937;
     }
-    
     .sidebar-section {
         padding: 1rem 0;
         border-bottom: 1px solid #E5E7EB;
     }
-    
     .sidebar-link {
         display: flex;
         align-items: center;
@@ -214,14 +209,12 @@ st.markdown("""
         padding: 0.5rem 0;
         transition: color 0.2s;
     }
-    
     .sidebar-link:hover {
         color: #2563EB;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Sidebar content
 with st.sidebar:
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -239,21 +232,11 @@ with st.sidebar:
     st.markdown("**Dr. Robert Hernández Martínez**")
 
     st.markdown("""
-        <a href="https://chomchom216.medium.com/" class="sidebar-link">
-            📝 Articles on Medium
-        </a>
-        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">
-            🎓 Academic Publications
-        </a>
-        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">
-            🏆 Credentials
-        </a>
-        <a href="https://github.com/robert0777" class="sidebar-link">
-            🐙 GitHub
-        </a>
-        <a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">
-            📧 Contact
-        </a>
+        <a href="https://chomchom216.medium.com/" class="sidebar-link">📝 Articles on Medium</a>
+        <a href="https://unam1.academia.edu/Robert_Hernandez_Martinez" class="sidebar-link">🎓 Academic Publications</a>
+        <a href="https://www.credly.com/users/robert-hernandez.89bffe7b" class="sidebar-link">🏆 Credentials</a>
+        <a href="https://github.com/robert0777" class="sidebar-link">🐙 GitHub</a>
+        <a href="mailto:robert@actuariayfinanzas.net" class="sidebar-link">📧 Contact</a>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -263,33 +246,22 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-# OpenRouter client initialization
+api_key = os.getenv("OPENROUTER_API_KEY")
+if not api_key:
+    st.error("⚠️ OPENROUTER_API_KEY no encontrada en las variables de entorno.")
+    st.stop()
+
 try:
     openrouter_client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY")
+        api_key=api_key
     )
     
     MODEL_NAME = "openrouter/auto"
-    
-    # Connection test
-    test_response = openrouter_client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": "Eres un asistente experto en comercio exterior."},
-            {"role": "user", "content": "test connection"}
-        ],
-        max_tokens=20,
-        stream=False
-    )
 except Exception as e:
-    st.error(f"""Error al inicializar el cliente de OpenRouter: {str(e)}
-             Acciones requeridas:
-             1. Verifique la clave OPENROUTER_API_KEY en el archivo .env
-             2. Verifique su conexión a internet""")
+    st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
     st.stop()
 
-# System Prompt specialized in Trade
 TRADE_SYSTEM_PROMPT = """Eres un experto asesor en materia de comercio exterior y legislación aduanera mexicana."""
 
 TRADE_USER_TEMPLATE = """Basado en la consulta específica sobre "{question}", analiza cuidadosamente 
@@ -332,14 +304,16 @@ if prompt1:
     is_greeting, greeting_response, actual_question = st.session_state.greeting_handler.process_input(prompt1)
     
     if is_greeting:
-        st.write(greeting_response)
+        st.info(greeting_response)
         
-    if actual_question:
+    query_to_process = actual_question if actual_question else (prompt1 if not is_greeting else None)
+    
+    if query_to_process:
         if "documents" in st.session_state:
             try:
-                with st.spinner('Analizando documentos...'):
+                with st.spinner('Analizando documentos y generando reporte...'):
                     start = time.process_time()
-                    selected_chunks = select_relevant_chunks(actual_question, st.session_state.documents)
+                    selected_chunks = select_relevant_chunks(query_to_process, st.session_state.documents)
                     
                     docs_used = {}
                     for chunk in selected_chunks:
@@ -356,7 +330,8 @@ if prompt1:
                     
                     context = truncate_context("\n\n".join(context_parts))
                     
-                    response_stream = openrouter_client.chat.completions.create(
+                    # Direct static completion call to ensure output reliability
+                    completion = openrouter_client.chat.completions.create(
                         model=MODEL_NAME,
                         messages=[
                             {"role": "system", "content": TRADE_SYSTEM_PROMPT},
@@ -364,22 +339,22 @@ if prompt1:
                                 "role": "user",
                                 "content": TRADE_USER_TEMPLATE.format(
                                     context=context,
-                                    question=actual_question
+                                    question=query_to_process
                                 )
                             }
                         ],
                         temperature=0.4,
                         top_p=0.9,
-                        max_tokens=1500,
-                        stream=True,
+                        max_tokens=2000,
+                        stream=False,
                         extra_headers={
                             "HTTP-Referer": "http://localhost:8501",
                             "X-Title": "Trade Compliance Advisor"
                         }
                     )
                     
-                    st.write("📋 Reporte Técnico de Cumplimiento:")
-                    st.write_stream(response_stream)
+                    st.subheader("📋 Reporte Técnico de Cumplimiento")
+                    st.markdown(completion.choices[0].message.content)
                     st.info(f"⏱️ Tiempo de procesamiento: {time.process_time() - start:.2f} segundos")
                     
                     st.write("\n📚 Documentos consultados:")
@@ -397,8 +372,6 @@ if prompt1:
                          3. Pruebe con una consulta más corta o vuelva a intentar si el modelo gratuito está saturado""")
         else:
             st.warning("⚠️ Por favor, primero cargue los documentos usando el botón 'Click aquí para Cargar y Procesar Documentos en el Sistema'")
-    elif not is_greeting:
-        st.warning("Por favor, formule una pregunta específica sobre legislación aduanera o T-MEC.")
 
 # Footer
 st.markdown("""
