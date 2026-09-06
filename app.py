@@ -174,35 +174,23 @@ st.set_page_config(layout="wide", page_title="Asesor AI de Comercio Exterior y A
 st.header("Asistente AI Especializado en Legislación Aduanera y T-MEC")
 st.markdown("Sistema de consulta para importadores, exportadores y agentes aduanales sobre la normativa del corredor US-MX.")
 
-
-
-
-
 # Sidebar content
 with st.sidebar:
-    # App Logo and Title
     col1, col2 = st.columns([1, 3])
     with col1:
         st.image("ai-advisor-icon.svg", width=50)
     with col2:
         st.markdown('<p class="sidebar-app-name">AI Chatbot Asesor de Normativa Aduanera Mexicana</p>', unsafe_allow_html=True)
     
-    
-    # About Section
     st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
     st.markdown("### 📖 About this App")
     st.write("Analizador automatizado de normativa aduanera mexicana, Reglas Generales de Comercio Exterior y T-MEC.")
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Author Section
     st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
     st.markdown("### 👤 Author")
     st.markdown("**Dr. Robert Hernández Martínez**")
 
-
-    
-    # Contact Links
-   
     st.markdown(
     """
     <div class="sidebar-link-container">
@@ -216,40 +204,29 @@ with st.sidebar:
     unsafe_allow_html=True,
 )
     
-    
-    
-    # Footer
     st.markdown("""
         <div style="position: fixed; bottom: 0; padding: 1rem; text-align: center; font-size: 0.8rem; color: #6B7280;">
             © 2026 Asistente AI Especializado en Legislación Aduanera y T-MEC
         </div>
     """, unsafe_allow_html=True)
 
-
-
-
-
-
-
-
-
-
-# Client Initialization
+# Client Initialization via OpenRouter
 try:
-    nvidia_client = OpenAI(
-        base_url="https://integrate.api.nvidia.com/v1",
-        api_key=os.getenv("NVIDIA_API_KEY")
+    openrouter_client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY")
     )
+    # Default to openrouter/auto or meta-llama/llama-3.3-70b-instruct:free
+    MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME", "meta-llama/llama-3.3-70b-instruct:free")
 except Exception as e:
-    st.error(f"Error al inicializar el cliente NVIDIA NIMS: {str(e)}")
+    st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
     st.stop()
 
 # System Prompt specialized in Trade
-TRADE_PROMPT_TEMPLATE = """
-Eres un Asistente Experto (SME) en Comercio Exterior y Legislación Aduanera Mexicana/EE.UU.
-Tu objetivo es ayudar a importadores, exportadores y agentes aduanales a realizar análisis de cumplimiento.
+TRADE_SYSTEM_PROMPT = """Eres un Asistente Experto (SME) en Comercio Exterior y Legislación Aduanera Mexicana/EE.UU.
+Tu objetivo es ayudar a importadores, exportadores y agentes aduanales a realizar análisis de cumplimiento."""
 
-Instrucciones de Respuesta:
+TRADE_USER_TEMPLATE = """Instrucciones de Respuesta:
 1. Analiza exhaustivamente la consulta usando únicamente los fragmentos proporcionados.
 2. Presenta todas las cifras, tasas tributarias (IGE, IVA, DTA), valoraciones y métricas en sus formatos correspondientes (USD, MXN, %, etc.).
 3. Incluye referencias normativas específicas para cada afirmación (artículos de Ley Aduanera, Anexo 22, CFF, Capítulos T-MEC, etc.).
@@ -261,8 +238,7 @@ Extractos Normativos Disponibles:
 
 Consulta del Usuario: {question}
 
-Informe de Cumplimiento:
-"""
+Informe de Cumplimiento:"""
 
 if 'greeting_handler' not in st.session_state:
     st.session_state.greeting_handler = GreetingHandler()
@@ -308,13 +284,14 @@ if prompt1:
                     
                     context = truncate_context("\n\n".join(context_parts))
                     
-                    completion = nvidia_client.chat.completions.create(
-                        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                    # Streaming completion via OpenRouter
+                    response_stream = openrouter_client.chat.completions.create(
+                        model=MODEL_NAME,
                         messages=[
-                            {"role": "system", "content": "/think"},
+                            {"role": "system", "content": TRADE_SYSTEM_PROMPT},
                             {
                                 "role": "user",
-                                "content": TRADE_PROMPT_TEMPLATE.format(
+                                "content": TRADE_USER_TEMPLATE.format(
                                     context=context,
                                     question=actual_question
                                 )
@@ -323,12 +300,16 @@ if prompt1:
                         temperature=0.3,
                         top_p=0.95,
                         max_tokens=4000,
-                        stream=False
+                        stream=True,
+                        extra_headers={
+                            "HTTP-Referer": "http://localhost:8501",
+                            "X-Title": "Trade Compliance Advisor"
+                        }
                     )
                     
                     st.write("📋 Reporte Técnico de Cumplimiento:")
-                    st.write(completion.choices[0].message.content)
-                    st.info(f"⏱️ Tiempo de respuesta: {time.process_time() - start:.2f} segundos")
+                    st.write_stream(response_stream)
+                    st.info(f"⏱️ Tiempo de procesamiento: {time.process_time() - start:.2f} segundos")
                     
                     with st.expander("Ver Fuentes Consultadas"):
                         for doc_name, doc_chunks in docs_used.items():
