@@ -5,16 +5,11 @@ import datetime
 import re
 from pathlib import Path
 from functools import lru_cache
-from dotenv import load_dotenv
 import tiktoken
 
 from openai import OpenAI
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-# Load environment variables explicitly
-env_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=env_path, override=True)
 
 DATA_DIR = "./pdf_files_comercio_exterior"
 
@@ -226,13 +221,11 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-
-
-# OpenRouter Client Setup
-openrouter_key = os.getenv("OPENROUTER_API_KEY")
+# API Secrets Setup (Streamlit Secrets primary, environment fallback)
+openrouter_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
 if not openrouter_key:
-    st.error("⚠️ OPENROUTER_API_KEY no encontrada en las variables de entorno.")
+    st.error("⚠️ OPENROUTER_API_KEY no encontrada en st.secrets ni en las variables de entorno.")
     st.stop()
 
 try:
@@ -240,7 +233,6 @@ try:
         base_url="https://openrouter.ai/api/v1",
         api_key=openrouter_key
     )
-    # Target active free endpoints from OpenRouter
     FREE_MODELS = [
         "minimax/minimax-m3:free",
         "google/gemma-4-31b:free",
@@ -251,11 +243,6 @@ except Exception as e:
     st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
     st.stop()
 
-
-
-
-
-
 def generate_completion_with_fallback(client, models_list, messages, temperature=0.3, max_tokens=3000):
     last_error = None
     for model in models_list:
@@ -265,7 +252,7 @@ def generate_completion_with_fallback(client, models_list, messages, temperature
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=True,  # Set streaming to True
+                stream=True,
                 extra_headers={
                     "HTTP-Referer": "http://localhost:8501",
                     "X-Title": "Trade Compliance Advisor"
@@ -277,12 +264,6 @@ def generate_completion_with_fallback(client, models_list, messages, temperature
             continue
             
     raise RuntimeError(f"Todos los modelos fallaron. Último error: {str(last_error)}")
-
-
-
-
-
-
 
 TRADE_SYSTEM_PROMPT = """Eres un experto asesor en materia de comercio exterior y legislación aduanera mexicana."""
 
@@ -322,27 +303,20 @@ if st.button("Click aquí para Cargar y Procesar Documentos en el Sistema"):
         except Exception as e:
             st.error(f"Error al cargar los documentos: {str(e)}")
 
-
-
-
-
-
-
-
 if prompt1:
     is_greeting, greeting_response, actual_question = st.session_state.greeting_handler.process_input(prompt1)
     
-    if is_greeting:
-        st.info(greeting_response)
-        
-    query_to_process = actual_question if actual_question else (prompt1 if not is_greeting else None)
+    # 1. Display dynamic greeting message if detected
+    if is_greeting and greeting_response:
+        st.write(greeting_response)
     
-    if query_to_process:
+    # 2. Process technical question IF present
+    if actual_question and actual_question.strip():
         if "documents" in st.session_state:
             try:
                 with st.spinner('Analizando documentos y generando reporte...'):
                     start = time.process_time()
-                    selected_chunks = select_relevant_chunks(query_to_process, st.session_state.documents)
+                    selected_chunks = select_relevant_chunks(actual_question, st.session_state.documents)
                     
                     docs_used = {}
                     for chunk in selected_chunks:
@@ -365,12 +339,11 @@ if prompt1:
                             "role": "user",
                             "content": TRADE_USER_TEMPLATE.format(
                                 context=context,
-                                question=query_to_process
+                                question=actual_question
                             )
                         }
                     ]
 
-                    # Execute streaming request with model fallback
                     response_stream, used_model = generate_completion_with_fallback(
                         openrouter_client,
                         FREE_MODELS,
@@ -380,8 +353,6 @@ if prompt1:
                     )
 
                     st.subheader("📋 Reporte Técnico de Cumplimiento")
-                    
-                    # Display active model name and stream response
                     st.write(f"📝 Respuesta *(Modelo activo: `{used_model}`)*:")
                     st.write_stream(response_stream)
                         
@@ -398,17 +369,15 @@ if prompt1:
                 st.error(f"Error durante el procesamiento: {str(e)}")
         else:
             st.warning("⚠️ Por favor, primero cargue los documentos usando el botón 'Click aquí para Cargar y Procesar Documentos en el Sistema'")
-
-
-
-
-
-
-
-
-
-
-
+            
+    # 3. If no technical question was supplied, guide the user directly
+    else:
+        st.info(
+            "💡 **¿En qué te puedo ayudar hoy?** Puedes preguntarme sobre:\n"
+            "- Reglas de Origen y Certificación bajo el T-MEC.\n"
+            "- Clasificación arancelaria, IGE, IVA y DTA.\n"
+            "- Cumplimiento en Ley Aduanera, Reglas Generales de Comercio Exterior y CFF."
+        )
 
 # Footer
 st.markdown("""
