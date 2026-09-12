@@ -221,7 +221,11 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-# API Secrets Setup (Streamlit Secrets primary, environment fallback)
+
+
+
+
+# OpenRouter Client Setup
 openrouter_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
 if not openrouter_key:
@@ -233,15 +237,29 @@ try:
         base_url="https://openrouter.ai/api/v1",
         api_key=openrouter_key
     )
+    # Target active free endpoints from OpenRouter
     FREE_MODELS = [
-        "minimax/minimax-m3:free",
-        "google/gemma-4-31b:free",
+        "nex-agi/nex-n2.5-pro:free",
+        "thinking-machines/inkling-small:free",
         "cohere/north-mini-code:free",
-        "openrouter/free-models-router"
+        "nex-agi/nex-n2.5-mini:free",
+        "google/gemma-4-31b:free",
+        "google/gemma-4-26b-a4b:free",
+        "nvidia/nemotron-3-nano-omni:free",
+        "openrouter/free"
     ]
 except Exception as e:
     st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
     st.stop()
+
+
+
+
+
+
+
+
+
 
 def generate_completion_with_fallback(client, models_list, messages, temperature=0.3, max_tokens=3000):
     last_error = None
