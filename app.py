@@ -246,7 +246,8 @@ try:
         "google/gemma-4-31b:free",
         "google/gemma-4-26b-a4b:free",
         "nvidia/nemotron-3-nano-omni:free",
-        "openrouter/free"
+        "minimax/minimax-m3:free",
+        "openrouter/free-models-router"
     ]
 except Exception as e:
     st.error(f"Error al inicializar el cliente de OpenRouter: {str(e)}")
