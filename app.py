@@ -367,7 +367,7 @@ if prompt1:
                         FREE_MODELS,
                         messages_payload,
                         temperature=0.3,
-                        max_tokens=3000
+                        max_tokens=4000
                     )
 
                     st.subheader("📋 Reporte Técnico de Cumplimiento")
