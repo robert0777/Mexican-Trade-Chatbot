@@ -239,14 +239,12 @@ try:
     )
     # Target active free endpoints from OpenRouter
     FREE_MODELS = [
-        "nex-agi/nex-n2.5-pro:free",
-        "thinking-machines/inkling-small:free",
-        "cohere/north-mini-code:free",
-        "nex-agi/nex-n2.5-mini:free",
-        "google/gemma-4-31b:free",
-        "google/gemma-4-26b-a4b:free",
-        "nvidia/nemotron-3-nano-omni:free",
         "minimax/minimax-m3:free",
+        "google/gemma-4-31b:free",
+        "cohere/north-mini-code:free",
+        "google/gemma-4-26b-a4b:free",
+        "thinking-machines/inkling-small:free",
+        "nvidia/nemotron-3-nano-omni:free",
         "openrouter/free-models-router"
     ]
 except Exception as e:
