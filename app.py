@@ -239,12 +239,12 @@ try:
     )
     # Target active free endpoints from OpenRouter
     FREE_MODELS = [
-        "minimax/minimax-m3:free",
         "google/gemma-4-31b:free",
-        "cohere/north-mini-code:free",
         "google/gemma-4-26b-a4b:free",
+        "minimax/minimax-m3:free",
         "thinking-machines/inkling-small:free",
         "nvidia/nemotron-3-nano-omni:free",
+        "cohere/north-mini-code:free",
         "openrouter/free-models-router"
     ]
 except Exception as e:
@@ -293,7 +293,8 @@ Instrucciones específicas:
 2. Presenta cifras, tasas tributarias (IGE, IVA, DTA), valoraciones y métricas.
 3. Incluye referencias normativas específicas (artículos de Ley Aduanera, Anexo 22, CFF, Capítulos T-MEC).
 4. Ofrece una opinión técnica sustentada y agrega un aviso de exención de responsabilidad (Disclaimer).
-5. Finaliza OBLIGATORIAMENTE con una tabla RAID (Risks, Actions, Issues, Decisions) formateada en Markdown.
+5. Incluye una sección obligatoria titulada "## Aviso Legal (Disclaimer)" con la exención de responsabilidad.
+6. Finaliza OBLIGATORIAMENTE con una sección titulada "## Matriz RAID (Risks, Actions, Issues, Decisions)" formateada como una tabla en Markdown.
 
 Extractos Normativos Disponibles:
 {context}
